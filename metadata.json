@@ -1,0 +1,6 @@
+{
+  "name": "Cute Share",
+  "description": "Ultra-fast, clean file sharing with 10 3D cartoon avatars, radar waves, QR code peer connection, and real-time transfer monitor by Vilson Sonkar.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
