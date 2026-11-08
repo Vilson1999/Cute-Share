@@ -16,16 +16,15 @@ import com.example.model.UserProfile
 import com.example.ui.navigation.Screen
 import com.example.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class MainViewModel : ViewModel() {
 
     private val localTransferManager = TransferManager(viewModelScope)
     private var p2pTransferManager: P2PTransferManager? = null
+    private var applicationContext: Context? = null
 
     // User Profile
     private val _userProfile = MutableStateFlow(
@@ -51,7 +50,7 @@ class MainViewModel : ViewModel() {
     private val _transferHistory = MutableStateFlow<List<TransferSession>>(emptyList())
     val transferHistory: StateFlow<List<TransferSession>> = _transferHistory.asStateFlow()
 
-    // Real discovered peers (ONLY devices that currently have the Receive screen open)
+    // Real discovered peers (devices that currently have the Receive screen open)
     private val _discoveredPeers = MutableStateFlow<List<DiscoveredDevice>>(emptyList())
     val discoveredPeers: StateFlow<List<DiscoveredDevice>> = _discoveredPeers.asStateFlow()
 
@@ -65,6 +64,10 @@ class MainViewModel : ViewModel() {
 
     private val _showPermissionDialog = MutableStateFlow(false)
     val showPermissionDialog: StateFlow<Boolean> = _showPermissionDialog.asStateFlow()
+
+    // Ask for permission only first time flag
+    private val _hasAskedPermissions = MutableStateFlow(false)
+    val hasAskedPermissions: StateFlow<Boolean> = _hasAskedPermissions.asStateFlow()
 
     private val _isAddingMoreToActiveSession = MutableStateFlow(false)
     val isAddingMoreToActiveSession: StateFlow<Boolean> = _isAddingMoreToActiveSession.asStateFlow()
@@ -88,6 +91,10 @@ class MainViewModel : ViewModel() {
     }
 
     fun attachContext(context: Context) {
+        applicationContext = context.applicationContext
+        val prefs = context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
+        _hasAskedPermissions.value = prefs.getBoolean("has_asked_permissions", false)
+
         if (p2pTransferManager != null) return
         val manager = P2PTransferManager(context.applicationContext, viewModelScope)
         p2pTransferManager = manager
@@ -119,11 +126,27 @@ class MainViewModel : ViewModel() {
     }
 
     fun triggerPermissionRequest() {
-        _showPermissionDialog.value = true
+        if (!_hasAskedPermissions.value) {
+            _showPermissionDialog.value = true
+        }
     }
 
     fun dismissPermissionDialog() {
         _showPermissionDialog.value = false
+        markPermissionsAsked()
+    }
+
+    fun onPermissionsHandled() {
+        _showPermissionDialog.value = false
+        markPermissionsAsked()
+    }
+
+    private fun markPermissionsAsked() {
+        _hasAskedPermissions.value = true
+        applicationContext?.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
+            ?.edit()
+            ?.putBoolean("has_asked_permissions", true)
+            ?.apply()
     }
 
     fun initProfile(name: String, avatarRes: Int, isCreated: Boolean) {
@@ -136,13 +159,19 @@ class MainViewModel : ViewModel() {
     }
 
     fun saveUserProfile(name: String, avatarRes: Int) {
+        val wasCreated = _userProfile.value.isCreated
         _userProfile.value = UserProfile(
             name = name.ifEmpty { "Cute Explorer" },
             avatarRes = avatarRes,
             isCreated = true
         )
         _currentScreen.value = Screen.HOME
-        _showPermissionDialog.value = true
+
+        // ASK FOR PERMISSION ONLY FIRST TIME:
+        // Only prompt when user creates account for the very first time and has not been asked before
+        if (!wasCreated && !_hasAskedPermissions.value) {
+            _showPermissionDialog.value = true
+        }
     }
 
     fun resetUserProfile() {
@@ -228,6 +257,10 @@ class MainViewModel : ViewModel() {
 
     fun stopDiscoveryMode() {
         p2pTransferManager?.stopDiscovery()
+    }
+
+    fun rescanPeers() {
+        startDiscoveryMode()
     }
 
     fun addManualPeer(ip: String) {

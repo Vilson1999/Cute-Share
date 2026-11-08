@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
         val isCreated = prefs.getBoolean("profile_created", false)
         val name = prefs.getString("profile_name", "Cute Explorer") ?: "Cute Explorer"
         val avatarRes = prefs.getInt("profile_avatar", R.drawable.avatar_1_bunny)
+        viewModel.attachContext(this)
         viewModel.initProfile(name = name, avatarRes = avatarRes, isCreated = isCreated)
 
         handleIntent(intent)

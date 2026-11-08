@@ -142,4 +142,27 @@ class ExampleRobolectricTest {
     // When no receiver has opened their screen, discovered peers is empty
     assertEquals(0, viewModel.discoveredPeers.value.size)
   }
+
+  @Test
+  fun `permission dialog is triggered only on first time profile creation and not on subsequent saves`() {
+    val viewModel = com.example.ui.MainViewModel()
+    // First time setup: profile not created yet
+    viewModel.initProfile("New User", R.drawable.avatar_1_bunny, isCreated = false)
+    assertEquals(false, viewModel.showPermissionDialog.value)
+
+    // User completes first-time profile creation -> triggers permission dialog
+    viewModel.saveUserProfile("New User", R.drawable.avatar_1_bunny)
+    assertEquals(true, viewModel.showPermissionDialog.value)
+
+    // User handles permissions
+    viewModel.onPermissionsHandled()
+    assertEquals(false, viewModel.showPermissionDialog.value)
+    assertEquals(true, viewModel.hasAskedPermissions.value)
+
+    // Later: user opens profile again and saves -> MUST NOT ask for permission again!
+    viewModel.openProfile()
+    viewModel.saveUserProfile("Updated Name", R.drawable.avatar_2_panda)
+    assertEquals(false, viewModel.showPermissionDialog.value)
+  }
 }
+

@@ -27,8 +27,9 @@ object NetworkUtils {
                     if (addr is Inet4Address && !addr.isLoopbackAddress) {
                         val host = addr.hostAddress ?: ""
                         if (host.isNotEmpty() && !host.startsWith("127.")) {
-                            // Prioritize wlan/ap interfaces
-                            if (iface.name.startsWith("wlan") || iface.name.startsWith("ap") || iface.name.startsWith("rndis")) {
+                            val name = iface.name.lowercase()
+                            // Prioritize wlan/ap/softap/rndis interfaces
+                            if (name.startsWith("wlan") || name.startsWith("ap") || name.startsWith("softap") || name.startsWith("rndis")) {
                                 return host
                             }
                             candidates.add(host)
@@ -41,6 +42,17 @@ object NetworkUtils {
             }
         } catch (_: Exception) {}
         return "127.0.0.1"
+    }
+
+    /**
+     * Returns the /24 subnet prefix for scanning, e.g. "192.168.1."
+     */
+    fun getSubnetPrefix(ip: String = getLocalIpAddress()): String? {
+        if (ip.isEmpty() || ip.startsWith("127.")) return null
+        val parts = ip.split(".")
+        return if (parts.size == 4) {
+            "${parts[0]}.${parts[1]}.${parts[2]}."
+        } else null
     }
 
     /**

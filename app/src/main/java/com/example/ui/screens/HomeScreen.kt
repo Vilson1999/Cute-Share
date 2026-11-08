@@ -28,7 +28,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CallReceived
+import androidx.compose.material.icons.automirrored.rounded.CallReceived
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.NearMe
@@ -360,7 +360,7 @@ private fun BigCircleReceiveButton(
                     .background(Color.White.copy(alpha = 0.22f))
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.CallReceived,
+                    imageVector = Icons.AutoMirrored.Rounded.CallReceived,
                     contentDescription = "Receive",
                     tint = Color.White,
                     modifier = Modifier.size(iconSize)

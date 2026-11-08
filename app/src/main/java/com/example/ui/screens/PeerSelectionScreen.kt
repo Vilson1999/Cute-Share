@@ -1,11 +1,14 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -21,24 +24,33 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.NearMe
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Wifi
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,6 +65,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -61,6 +74,7 @@ import com.example.model.SharedFile
 import com.example.model.UserProfile
 import com.example.model.formatBytes
 import com.example.ui.components.StyledIconBox
+import kotlinx.coroutines.delay
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -71,11 +85,23 @@ fun PeerSelectionScreen(
     discoveredPeers: List<DiscoveredDevice> = emptyList(),
     onBackClick: () -> Unit,
     onSelectPeer: (DiscoveredDevice) -> Unit,
+    onRescan: () -> Unit = {},
+    onAddManualPeer: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val totalSize = remember(filesToShare) { filesToShare.sumOf { it.sizeBytes } }
 
-    // Search flow animation around sharing user photo
+    var showHelpTip by remember { mutableStateOf(false) }
+    LaunchedEffect(discoveredPeers) {
+        if (discoveredPeers.isEmpty()) {
+            delay(3500)
+            showHelpTip = true
+        } else {
+            showHelpTip = false
+        }
+    }
+
+    // Search flow animation radiating from around sharing user photo
     val infiniteTransition = rememberInfiniteTransition(label = "search_flow")
 
     val wave1 by infiniteTransition.animateFloat(
@@ -140,7 +166,7 @@ fun PeerSelectionScreen(
         val heightPx = constraints.maxHeight.toFloat()
         val minDim = minOf(widthPx, heightPx)
 
-        // Animated Search Flow Canvas radiating outward directly from around the center sharing user
+        // Animated Search Flow Canvas radiating outward directly around the center sharing user
         Canvas(modifier = Modifier.fillMaxSize()) {
             val center = Offset(size.width / 2f, size.height / 2f)
             val startRadius = 54.dp.toPx()
@@ -183,7 +209,7 @@ fun PeerSelectionScreen(
             }
         }
 
-        // Clean Top Bar: Back button and files summary badge (no extra buttons)
+        // Top Bar: Back button, files summary badge, and Scan Nearby button (No IP address shown)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -237,16 +263,26 @@ fun PeerSelectionScreen(
                 )
             }
 
-            // Balanced spacing for clean centered alignment
-            Spacer(modifier = Modifier.size(44.dp))
+            // Rescan Nearby Devices Button with styled icon background (No IP shown)
+            StyledIconBox(
+                icon = Icons.Rounded.Refresh,
+                contentDescription = "Scan nearby devices",
+                size = 44.dp,
+                iconSize = 22.dp,
+                backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                iconTint = Color(0xFF00E5FF),
+                shape = RoundedCornerShape(12.dp),
+                onClick = onRescan,
+                modifier = Modifier.testTag("rescan_nearby_devices_button")
+            )
         }
 
-        // USER NAME: 25% UP OF CENTER OF THE SCREEN
+        // USER NAME: MOVED UP 50% (37.5% UP OF CENTER) - NO IP SHOWN
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .align(Alignment.Center)
-                .offset(y = -(maxHeight * 0.25f))
+                .offset(y = -(maxHeight * 0.375f))
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
                 .border(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f), RoundedCornerShape(12.dp))
@@ -306,34 +342,56 @@ fun PeerSelectionScreen(
             }
         }
 
-        // WAITING FOR RECEIVER TEXT: 25% BELOW OF CENTER OF THE SCREEN
+        // SCANNING STATUS / PEERS FOUND BADGE: 25% BELOW OF CENTER OF THE SCREEN
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .align(Alignment.Center)
                 .offset(y = maxHeight * 0.25f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
-                .padding(horizontal = 16.dp, vertical = 7.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f))
+                .border(
+                    width = 1.dp,
+                    color = if (discoveredPeers.isEmpty()) MaterialTheme.colorScheme.outline.copy(alpha = 0.25f) else Color(0xFF10B981).copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                .padding(horizontal = 16.dp, vertical = 8.dp)
                 .zIndex(5f)
         ) {
             Box(
                 modifier = Modifier
                     .size(8.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF00E5FF))
+                    .background(if (discoveredPeers.isEmpty()) Color(0xFF00E5FF) else Color(0xFF10B981))
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = if (discoveredPeers.isEmpty()) "Waiting for receiver..." else "Select device to send",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
+                text = if (discoveredPeers.isEmpty()) "Scanning for nearby devices..." else "${discoveredPeers.size} nearby device(s) ready • Tap to send",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
+            if (discoveredPeers.isEmpty()) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                        .clickable { onRescan() }
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Refresh,
+                        contentDescription = "Rescan",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
         }
 
-        // ONLY REAL READY-TO-RECEIVE DEVICES (No unnecessary or dummy device profiles)
+        // REAL DISCOVERED PEERS ORBITING AROUND SENDER (Shows Avatar, Name, 5GHz/2.4GHz Band - NO IP SHOWN)
         if (discoveredPeers.isNotEmpty()) {
             val maxRadiusDp = with(density) { (minDim * 0.38f).toDp() }
             val orbitInner = maxRadiusDp * 0.65f
@@ -356,6 +414,58 @@ fun PeerSelectionScreen(
                         .offset(x = offsetX, y = offsetY)
                         .zIndex(6f)
                 )
+            }
+        }
+
+        // Bottom Helper Card if no receiver is visible yet
+        AnimatedVisibility(
+            visible = showHelpTip && discoveredPeers.isEmpty(),
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(16.dp)
+                .zIndex(7f)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f),
+                tonalElevation = 6.dp,
+                shadowElevation = 10.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 480.dp)
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(18.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Receiver phone must open 'Receive' screen with Cute Share running on Wi-Fi or Hotspot.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = { onRescan() },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        ),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Rescan Nearby Devices", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
     }
@@ -410,7 +520,7 @@ private fun RealPeerAccountBubble(
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Text(
                     text = peer.name,
@@ -419,6 +529,31 @@ private fun RealPeerAccountBubble(
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1
                 )
+                Spacer(modifier = Modifier.height(2.dp))
+                // Band Badge: 5 GHz or 2.4 GHz (NO IP ADDRESS SHOWN)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            if (peer.supports5Ghz) Color(0xFF00E5FF).copy(alpha = 0.15f) else Color(0xFF10B981).copy(alpha = 0.15f)
+                        )
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Wifi,
+                        contentDescription = null,
+                        tint = if (peer.supports5Ghz) Color(0xFF00E5FF) else Color(0xFF10B981),
+                        modifier = Modifier.size(8.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = peer.bandLabel,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (peer.supports5Ghz) Color(0xFF0284C7) else Color(0xFF059669)
+                    )
+                }
             }
         }
     }

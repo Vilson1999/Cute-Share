@@ -49,7 +49,7 @@ fun QuickShareApp(
     PermissionsHandler(
         showDialog = showPermissionDialog,
         onDismiss = { viewModel.dismissPermissionDialog() },
-        onPermissionsResult = { _ -> }
+        onPermissionsResult = { _ -> viewModel.onPermissionsHandled() }
     )
 
     Surface(
@@ -101,7 +101,9 @@ fun QuickShareApp(
                         onBackClick = { viewModel.onBack() },
                         onSelectPeer = { peer ->
                             viewModel.onPeerSelectedForTransfer(peer)
-                        }
+                        },
+                        onRescan = { viewModel.rescanPeers() },
+                        onAddManualPeer = { ip -> viewModel.addManualPeer(ip) }
                     )
 
                     Screen.RECEIVE_RADAR -> ReceiveRadarScreen(

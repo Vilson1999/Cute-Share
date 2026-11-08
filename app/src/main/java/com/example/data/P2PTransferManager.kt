@@ -24,16 +24,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
-import java.io.InputStreamReader
-import java.io.OutputStream
-import java.io.PrintWriter
 import java.net.DatagramPacket
 import java.net.DatagramSocket
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -52,7 +49,7 @@ class P2PTransferManager(
     private val _transferHistory = MutableStateFlow<List<TransferSession>>(emptyList())
     val transferHistory: StateFlow<List<TransferSession>> = _transferHistory.asStateFlow()
 
-    // Discovered devices in real-time (ONLY devices that currently have their receive screen open)
+    // Discovered devices in real-time (devices that have Cute Share open nearby)
     private val _discoveredPeers = MutableStateFlow<List<DiscoveredDevice>>(emptyList())
     val discoveredPeers: StateFlow<List<DiscoveredDevice>> = _discoveredPeers.asStateFlow()
 
@@ -71,8 +68,10 @@ class P2PTransferManager(
 
     // Background jobs
     private var discoveryJob: Job? = null
+    private var subnetScanJob: Job? = null
     private var receiverBeaconJob: Job? = null
     private var receiverServerJob: Job? = null
+    private var receiverDiscoveryListenerJob: Job? = null
     private var activeTransferJob: Job? = null
 
     // Sockets
@@ -80,13 +79,48 @@ class P2PTransferManager(
     private var activeSocket: Socket? = null
     private var discoverySocket: DatagramSocket? = null
     private var beaconSocket: DatagramSocket? = null
+    private var receiverUdpSocket: DatagramSocket? = null
     private var multicastLock: WifiManager.MulticastLock? = null
 
     init {
         try {
             val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             multicastLock = wifi?.createMulticastLock("CuteShareMulticastLock")?.apply {
-                setReferenceCounted(true)
+                setReferenceCounted(false)
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Inspects device Wi-Fi hardware and connection to detect 5 GHz capability and frequency.
+     * Returns Pair(supports5Ghz, is5GhzActive)
+     */
+    fun getLocalWifiBandInfo(): Pair<Boolean, Boolean> {
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                ?: return Pair(true, false)
+            val supports5Ghz = wifi.is5GHzBandSupported
+            val info = wifi.connectionInfo
+            val freq = info?.frequency ?: 0
+            val is5GhzActive = freq >= 4900
+            return Pair(supports5Ghz, is5GhzActive)
+        } catch (_: Exception) {
+            return Pair(true, false)
+        }
+    }
+
+    private fun acquireMulticast() {
+        try {
+            if (multicastLock?.isHeld != true) {
+                multicastLock?.acquire()
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun releaseMulticast() {
+        try {
+            if (multicastLock?.isHeld == true) {
+                multicastLock?.release()
             }
         } catch (_: Exception) {}
     }
@@ -96,46 +130,47 @@ class P2PTransferManager(
     // =========================================================================
 
     /**
-     * Starts searching for nearby devices that currently have the Receive screen open.
-     * If no device is open on Receive screen, discoveredPeers stays empty!
+     * Starts searching for nearby devices running Cute Share.
+     * Detects 5 GHz and 2.4 GHz capabilities across devices.
      */
     fun startDiscovery(senderProfile: UserProfile) {
         stopDiscovery()
         devicePeerMap.clear()
         _discoveredPeers.value = emptyList()
 
-        try {
-            multicastLock?.acquire()
-        } catch (_: Exception) {}
+        acquireMulticast()
 
+        val myIp = NetworkUtils.getLocalIpAddress()
+        val myDeviceId = UUID.randomUUID().toString().take(8)
+        val (my5Ghz, my5GhzActive) = getLocalWifiBandInfo()
+
+        // 1. UDP Broadcast Listener & Prober
         discoveryJob = scope.launch(Dispatchers.IO) {
             try {
                 discoverySocket = DatagramSocket(null).apply {
                     reuseAddress = true
                     broadcast = true
-                    soTimeout = 1000
+                    soTimeout = 1200
                     bind(InetSocketAddress(NetworkUtils.DISCOVERY_PORT))
                 }
             } catch (e: Exception) {
-                // Fallback to ephemeral port for listening
                 try {
                     discoverySocket = DatagramSocket().apply {
                         broadcast = true
-                        soTimeout = 1000
+                        soTimeout = 1200
                     }
                 } catch (_: Exception) {}
             }
 
             val socket = discoverySocket ?: return@launch
-            val buffer = ByteArray(2048)
+            val buffer = ByteArray(4096)
             val packet = DatagramPacket(buffer, buffer.size)
 
-            // Periodic probe and timeout cleanup launcher
+            // Periodic probe broadcast
             val probeJob = launch {
                 while (isActive) {
-                    // Send probe broadcast to wake up active receivers
                     try {
-                        val probeData = "CUTESHARE_PROBE:${senderProfile.name}".toByteArray(Charsets.UTF_8)
+                        val probeData = "CUTESHARE_PROBE:v2:$myDeviceId:${senderProfile.name}:$myIp:$my5Ghz:$my5GhzActive".toByteArray(Charsets.UTF_8)
                         for (broadcastAddr in NetworkUtils.getBroadcastAddresses()) {
                             try {
                                 val probePacket = DatagramPacket(
@@ -149,11 +184,11 @@ class P2PTransferManager(
                         }
                     } catch (_: Exception) {}
 
-                    // Remove peers that have stopped broadcasting (> 3.5 seconds)
+                    // Remove peers not seen in the last 4 seconds
                     val now = System.currentTimeMillis()
                     val toRemove = mutableListOf<String>()
                     for ((id, peer) in devicePeerMap) {
-                        if (now - peer.lastSeenTimestamp > 3500L) {
+                        if (now - peer.lastSeenTimestamp > 4000L) {
                             toRemove.add(id)
                         }
                     }
@@ -167,36 +202,53 @@ class P2PTransferManager(
             }
 
             // Packet receiving loop
-            while (isActive) {
+            while (isActive && !socket.isClosed) {
                 try {
+                    // MUST reset packet length before each receive to prevent packet truncation!
+                    packet.length = buffer.size
                     socket.receive(packet)
+
                     val message = String(packet.data, 0, packet.length, Charsets.UTF_8).trim()
-                    val senderIp = packet.address.hostAddress ?: ""
+                    val senderIp = packet.address?.hostAddress ?: ""
+
+                    // Ignore packets from self
+                    if (senderIp == myIp && message.contains(myDeviceId)) {
+                        continue
+                    }
 
                     if (message.startsWith("CUTESHARE_BEACON:")) {
-                        // Format: CUTESHARE_BEACON:v1:<deviceId>:<name>:<avatarRes>:<port>:<ip>
+                        // Format: CUTESHARE_BEACON:v2:<deviceId>:<name>:<avatarRes>:<port>:<ip>:<supports5Ghz>:<is5GhzActive>
                         val parts = message.split(":")
                         if (parts.size >= 7) {
                             val id = parts[2]
+                            if (id == myDeviceId) continue
+
                             val name = parts[3]
                             val avatarRes = parts[4].toIntOrNull() ?: R.drawable.avatar_1_bunny
                             val port = parts[5].toIntOrNull() ?: NetworkUtils.DEFAULT_TRANSFER_PORT
-                            val advertisedIp = parts[6].ifEmpty { senderIp }
+                            val advertisedIp = parts[6].trim()
+                            val realIp = if (advertisedIp.isEmpty() || advertisedIp.startsWith("127.")) senderIp else advertisedIp
+                            val supports5Ghz = parts.getOrNull(7)?.toBooleanStrictOrNull() ?: true
+                            val is5GhzActive = parts.getOrNull(8)?.toBooleanStrictOrNull() ?: false
 
-                            val peer = DiscoveredDevice(
-                                id = id,
-                                name = name,
-                                avatarRes = avatarRes,
-                                ip = advertisedIp,
-                                port = port,
-                                lastSeenTimestamp = System.currentTimeMillis()
-                            )
-                            devicePeerMap[id] = peer
-                            _discoveredPeers.value = devicePeerMap.values.toList()
+                            if (realIp.isNotEmpty() && !realIp.startsWith("127.")) {
+                                val peer = DiscoveredDevice(
+                                    id = id,
+                                    name = name,
+                                    avatarRes = avatarRes,
+                                    ip = realIp,
+                                    port = port,
+                                    supports5Ghz = supports5Ghz,
+                                    is5GhzActive = is5GhzActive,
+                                    lastSeenTimestamp = System.currentTimeMillis()
+                                )
+                                devicePeerMap[id] = peer
+                                _discoveredPeers.value = devicePeerMap.values.toList()
+                            }
                         }
                     }
                 } catch (_: java.net.SocketTimeoutException) {
-                    // Normal timeout, continue loop
+                    // Normal read timeout, loop around
                 } catch (_: Exception) {
                     if (!isActive) break
                 }
@@ -204,37 +256,138 @@ class P2PTransferManager(
 
             probeJob.cancel()
         }
+
+        // 2. Active Subnet TCP Scanning
+        subnetScanJob = scope.launch(Dispatchers.IO) {
+            val prefix = NetworkUtils.getSubnetPrefix(myIp)
+            val myHostNum = myIp.substringAfterLast('.', "0").toIntOrNull() ?: 0
+
+            while (isActive) {
+                if (prefix != null) {
+                    val priorityList = mutableListOf<String>()
+                    // Common gateways
+                    priorityList.add("192.168.43.1")
+                    priorityList.add("192.168.49.1")
+                    priorityList.add("${prefix}1")
+                    // Immediate neighbor IPs
+                    for (offset in 1..8) {
+                        val up = myHostNum + offset
+                        val down = myHostNum - offset
+                        if (up in 2..254) priorityList.add("$prefix$up")
+                        if (down in 2..254) priorityList.add("$prefix$down")
+                    }
+                    // Remaining subnet hosts
+                    for (i in 2..254) {
+                        val ip = "$prefix$i"
+                        if (i != myHostNum && !priorityList.contains(ip)) {
+                            priorityList.add(ip)
+                        }
+                    }
+
+                    val batchSize = 25
+                    for (chunk in priorityList.chunked(batchSize)) {
+                        if (!isActive) break
+                        val jobs = chunk.map { targetIp ->
+                            launch {
+                                probeTcpPeer(targetIp, NetworkUtils.DEFAULT_TRANSFER_PORT, myDeviceId)
+                            }
+                        }
+                        jobs.forEach { it.join() }
+                    }
+                }
+                delay(3000L)
+            }
+        }
+    }
+
+    private suspend fun probeTcpPeer(ip: String, port: Int, myDeviceId: String) = withContext(Dispatchers.IO) {
+        var s: Socket? = null
+        try {
+            s = Socket()
+            s.tcpNoDelay = true
+            s.connect(InetSocketAddress(ip, port), 220)
+            val out = BufferedOutputStream(s.getOutputStream())
+            val inStream = BufferedInputStream(s.getInputStream())
+
+            val (my5Ghz, my5GhzActive) = getLocalWifiBandInfo()
+            val pingMsg = "CUTESHARE_PING:$myDeviceId:$my5Ghz:$my5GhzActive\n".toByteArray(Charsets.UTF_8)
+            out.write(pingMsg)
+            out.flush()
+
+            val line = readAsciiLine(inStream, maxLen = 256)
+            if (line.startsWith("CUTESHARE_PONG|")) {
+                // Format: CUTESHARE_PONG|deviceId|name|avatarRes|port|ip|supports5Ghz|is5GhzActive
+                val parts = line.split("|")
+                if (parts.size >= 6) {
+                    val id = parts[1]
+                    if (id != myDeviceId) {
+                        val name = parts[2]
+                        val avatarRes = parts[3].toIntOrNull() ?: R.drawable.avatar_1_bunny
+                        val peerPort = parts[4].toIntOrNull() ?: port
+                        val advertisedIp = parts[5].trim()
+                        val realIp = if (advertisedIp.isEmpty() || advertisedIp.startsWith("127.")) ip else advertisedIp
+                        val supports5Ghz = parts.getOrNull(6)?.toBooleanStrictOrNull() ?: true
+                        val is5GhzActive = parts.getOrNull(7)?.toBooleanStrictOrNull() ?: false
+
+                        val peer = DiscoveredDevice(
+                            id = id,
+                            name = name,
+                            avatarRes = avatarRes,
+                            ip = realIp,
+                            port = peerPort,
+                            supports5Ghz = supports5Ghz,
+                            is5GhzActive = is5GhzActive,
+                            lastSeenTimestamp = System.currentTimeMillis()
+                        )
+                        devicePeerMap[id] = peer
+                        _discoveredPeers.value = devicePeerMap.values.toList()
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Unreachable or not a CuteShare receiver
+        } finally {
+            try { s?.close() } catch (_: Exception) {}
+        }
     }
 
     fun stopDiscovery() {
         discoveryJob?.cancel()
         discoveryJob = null
-        try {
-            discoverySocket?.close()
-        } catch (_: Exception) {}
+        subnetScanJob?.cancel()
+        subnetScanJob = null
+
+        try { discoverySocket?.close() } catch (_: Exception) {}
         discoverySocket = null
         devicePeerMap.clear()
         _discoveredPeers.value = emptyList()
 
-        try {
-            if (multicastLock?.isHeld == true) {
-                multicastLock?.release()
-            }
-        } catch (_: Exception) {}
+        releaseMulticast()
     }
 
     fun addManualPeer(ip: String, port: Int = NetworkUtils.DEFAULT_TRANSFER_PORT) {
-        val id = "manual_${ip.replace('.', '_')}"
-        val peer = DiscoveredDevice(
-            id = id,
-            name = "Receiver ($ip)",
-            avatarRes = R.drawable.avatar_1_bunny,
-            ip = ip,
-            port = port,
-            lastSeenTimestamp = System.currentTimeMillis() + 60000L
-        )
-        devicePeerMap[id] = peer
-        _discoveredPeers.value = devicePeerMap.values.toList()
+        val trimmedIp = ip.trim()
+        if (trimmedIp.isEmpty()) return
+
+        scope.launch(Dispatchers.IO) {
+            probeTcpPeer(trimmedIp, port, "manual")
+
+            if (!devicePeerMap.containsKey("manual_${trimmedIp.replace('.', '_')}")) {
+                val id = "manual_${trimmedIp.replace('.', '_')}"
+                val peer = DiscoveredDevice(
+                    id = id,
+                    name = "Nearby Device",
+                    avatarRes = R.drawable.avatar_1_bunny,
+                    ip = trimmedIp,
+                    port = port,
+                    supports5Ghz = true,
+                    is5GhzActive = false,
+                    lastSeenTimestamp = System.currentTimeMillis() + 120000L
+                )
+                devicePeerMap[id] = peer
+                _discoveredPeers.value = devicePeerMap.values.toList()
+            }
+        }
     }
 
     // =========================================================================
@@ -242,29 +395,31 @@ class P2PTransferManager(
     // =========================================================================
 
     /**
-     * Starts Receiver mode.
-     * Binds a local TCP ServerSocket to accept transfer requests.
-     * Broadcasts UDP beacons so searching senders can discover this device.
+     * Starts Receiver mode:
+     * 1) Binds local TCP ServerSocket (prioritizing 42888) to answer pings and accept file transfers
+     * 2) Broadcasts UDP beacons with 5 GHz / 2.4 GHz capability info every 800ms
+     * 3) Answers UDP probes immediately with beacon
      */
     fun startReceiver(
         userProfile: UserProfile,
         onSessionStarted: () -> Unit
     ) {
         stopReceiver()
+        acquireMulticast()
+
+        val deviceId = UUID.randomUUID().toString().take(8)
+        val (my5Ghz, my5GhzActive) = getLocalWifiBandInfo()
 
         try {
-            multicastLock?.acquire()
-        } catch (_: Exception) {}
-
-        // 1. Bind ServerSocket
-        try {
-            serverSocket = ServerSocket(0).apply {
+            serverSocket = ServerSocket(NetworkUtils.DEFAULT_TRANSFER_PORT).apply {
                 reuseAddress = true
+                receiveBufferSize = 524288
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             try {
-                serverSocket = ServerSocket(NetworkUtils.DEFAULT_TRANSFER_PORT).apply {
+                serverSocket = ServerSocket(0).apply {
                     reuseAddress = true
+                    receiveBufferSize = 524288
                 }
             } catch (_: Exception) {
                 return
@@ -273,9 +428,8 @@ class P2PTransferManager(
 
         val server = serverSocket ?: return
         val localPort = server.localPort
-        val deviceId = UUID.randomUUID().toString().take(8)
 
-        // 2. Broadcast UDP Beacon
+        // 2. Broadcast UDP Beacon with 5 GHz band info
         receiverBeaconJob = scope.launch(Dispatchers.IO) {
             try {
                 beaconSocket = DatagramSocket().apply {
@@ -284,9 +438,9 @@ class P2PTransferManager(
             } catch (_: Exception) {}
 
             val bSocket = beaconSocket ?: return@launch
-            while (isActive) {
-                val ip = NetworkUtils.getLocalIpAddress()
-                val beaconMsg = "CUTESHARE_BEACON:v1:$deviceId:${userProfile.name}:${userProfile.avatarRes}:$localPort:$ip"
+            while (isActive && !bSocket.isClosed) {
+                val currentIp = NetworkUtils.getLocalIpAddress()
+                val beaconMsg = "CUTESHARE_BEACON:v2:$deviceId:${userProfile.name}:${userProfile.avatarRes}:$localPort:$currentIp:$my5Ghz:$my5GhzActive"
                 val beaconData = beaconMsg.toByteArray(Charsets.UTF_8)
 
                 for (broadcastAddr in NetworkUtils.getBroadcastAddresses()) {
@@ -300,17 +454,54 @@ class P2PTransferManager(
                         bSocket.send(packet)
                     } catch (_: Exception) {}
                 }
-                delay(1000L)
+                delay(800L)
             }
         }
 
-        // 3. Listen for Incoming TCP Connections
+        // 3. Listen for UDP Probes to respond immediately
+        receiverDiscoveryListenerJob = scope.launch(Dispatchers.IO) {
+            try {
+                receiverUdpSocket = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    soTimeout = 1500
+                    bind(InetSocketAddress(NetworkUtils.DISCOVERY_PORT))
+                }
+            } catch (_: Exception) {}
+
+            val uSocket = receiverUdpSocket ?: return@launch
+            val buf = ByteArray(2048)
+            val p = DatagramPacket(buf, buf.size)
+
+            while (isActive && !uSocket.isClosed) {
+                try {
+                    p.length = buf.size
+                    uSocket.receive(p)
+                    val msg = String(p.data, 0, p.length, Charsets.UTF_8).trim()
+                    if (msg.startsWith("CUTESHARE_PROBE:") && !msg.contains(deviceId)) {
+                        val currentIp = NetworkUtils.getLocalIpAddress()
+                        val respMsg = "CUTESHARE_BEACON:v2:$deviceId:${userProfile.name}:${userProfile.avatarRes}:$localPort:$currentIp:$my5Ghz:$my5GhzActive"
+                        val respData = respMsg.toByteArray(Charsets.UTF_8)
+                        val replyPacket = DatagramPacket(respData, respData.size, p.address, NetworkUtils.DISCOVERY_PORT)
+                        uSocket.send(replyPacket)
+                    }
+                } catch (_: java.net.SocketTimeoutException) {
+                } catch (_: Exception) {
+                    if (!isActive) break
+                }
+            }
+        }
+
+        // 4. Accept TCP Connections (handles ping probe and transfer stream)
         receiverServerJob = scope.launch(Dispatchers.IO) {
             while (isActive && !server.isClosed) {
                 try {
                     val socket = server.accept()
-                    activeSocket = socket
-                    handleIncomingTransferConnection(socket, onSessionStarted)
+                    socket.tcpNoDelay = true
+                    socket.receiveBufferSize = 524288
+                    socket.sendBufferSize = 524288
+                    launch {
+                        handleIncomingTcpConnection(socket, deviceId, userProfile, localPort, my5Ghz, my5GhzActive, onSessionStarted)
+                    }
                 } catch (e: Exception) {
                     if (!isActive) break
                 }
@@ -318,32 +509,52 @@ class P2PTransferManager(
         }
     }
 
-    private suspend fun handleIncomingTransferConnection(
+    private suspend fun handleIncomingTcpConnection(
         socket: Socket,
+        deviceId: String,
+        userProfile: UserProfile,
+        localPort: Int,
+        my5Ghz: Boolean,
+        my5GhzActive: Boolean,
         onSessionStarted: () -> Unit
     ) = withContext(Dispatchers.IO) {
         try {
-            val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
-            val writer = PrintWriter(socket.getOutputStream(), true)
+            socket.soTimeout = 15000
+            val inStream = BufferedInputStream(socket.getInputStream(), 65536)
+            val outStream = BufferedOutputStream(socket.getOutputStream(), 65536)
 
-            // Read Header
-            val headerLine = reader.readLine() ?: return@withContext
-            if (!headerLine.startsWith("CUTESHARE_TRANSFER_v1")) {
+            val firstLine = readAsciiLine(inStream, maxLen = 256)
+
+            // A) Ping probe from sender
+            if (firstLine.startsWith("CUTESHARE_PING")) {
+                val ip = NetworkUtils.getLocalIpAddress()
+                val resp = "CUTESHARE_PONG|$deviceId|${userProfile.name}|${userProfile.avatarRes}|$localPort|$ip|$my5Ghz|$my5GhzActive\n"
+                outStream.write(resp.toByteArray(Charsets.UTF_8))
+                outStream.flush()
                 socket.close()
                 return@withContext
             }
 
-            // Sender meta line: senderId|senderName|senderAvatarRes|fileCount|totalBytes
-            val senderLine = reader.readLine() ?: return@withContext
+            // B) Transfer handshake
+            if (!firstLine.startsWith("CUTESHARE_TRANSFER_v1")) {
+                socket.close()
+                return@withContext
+            }
+
+            activeSocket = socket
+
+            // Sender meta line: senderId|senderName|senderAvatarRes|fileCount|totalBytes|negotiatedBand
+            val senderLine = readAsciiLine(inStream, maxLen = 512)
             val sParts = senderLine.split("|")
             val senderId = sParts.getOrNull(0) ?: "peer"
             val senderName = sParts.getOrNull(1) ?: "Cute Peer"
             val senderAvatarRes = sParts.getOrNull(2)?.toIntOrNull() ?: R.drawable.avatar_1_bunny
             val totalBytes = sParts.getOrNull(4)?.toLongOrNull() ?: 0L
+            val negotiatedBand = sParts.getOrNull(5) ?: (if (my5Ghz) "5 GHz" else "2.4 GHz")
 
             val incomingFiles = mutableListOf<SharedFile>()
-            var line = reader.readLine()
-            while (line != null && line != "END_HEADER") {
+            var line = readAsciiLine(inStream, maxLen = 1024)
+            while (line.isNotEmpty() && line != "END_HEADER") {
                 val fParts = line.split("|")
                 if (fParts.size >= 4) {
                     val fId = fParts[0]
@@ -363,7 +574,7 @@ class P2PTransferManager(
                         )
                     )
                 }
-                line = reader.readLine()
+                line = readAsciiLine(inStream, maxLen = 1024)
             }
 
             val senderDevice = DiscoveredDevice(
@@ -371,7 +582,8 @@ class P2PTransferManager(
                 name = senderName,
                 avatarRes = senderAvatarRes,
                 ip = socket.inetAddress?.hostAddress ?: "",
-                port = socket.port
+                port = socket.port,
+                supports5Ghz = negotiatedBand == "5 GHz"
             )
 
             // Prompt user on UI to Accept or Decline
@@ -382,16 +594,22 @@ class P2PTransferManager(
                 acceptAction = {
                     _incomingRequest.value = null
                     scope.launch(Dispatchers.IO) {
-                        writer.println("ACCEPT")
-                        onSessionStarted()
-                        receiveFilesStream(socket, incomingFiles, senderDevice)
+                        try {
+                            outStream.write("ACCEPT\n".toByteArray(Charsets.UTF_8))
+                            outStream.flush()
+                            onSessionStarted()
+                            receiveFilesStream(socket, inStream, outStream, incomingFiles, senderDevice, negotiatedBand)
+                        } catch (_: Exception) {
+                            try { socket.close() } catch (_: Exception) {}
+                        }
                     }
                 },
                 declineAction = {
                     _incomingRequest.value = null
                     scope.launch(Dispatchers.IO) {
                         try {
-                            writer.println("DECLINE")
+                            outStream.write("DECLINE\n".toByteArray(Charsets.UTF_8))
+                            outStream.flush()
                             socket.close()
                         } catch (_: Exception) {}
                     }
@@ -405,9 +623,14 @@ class P2PTransferManager(
 
     private suspend fun receiveFilesStream(
         socket: Socket,
+        inStream: BufferedInputStream,
+        outStream: BufferedOutputStream,
         files: List<SharedFile>,
-        senderDevice: DiscoveredDevice
+        senderDevice: DiscoveredDevice,
+        negotiatedBand: String
     ) = withContext(Dispatchers.IO) {
+        socket.soTimeout = 0 // Remove timeout during active byte streaming
+
         val items = files.map { file ->
             TransferFileItem(
                 id = file.id,
@@ -420,6 +643,8 @@ class P2PTransferManager(
             )
         }
 
+        val initialSpeed = if (negotiatedBand == "5 GHz") 58_000_000L else 24_000_000L
+
         val session = TransferSession(
             id = UUID.randomUUID().toString(),
             isOutgoing = false,
@@ -429,15 +654,11 @@ class P2PTransferManager(
             isPaused = false,
             isCancelled = false,
             isCompleted = false,
-            currentSpeedBytesPerSec = 0L,
-            remainingSeconds = 0L
+            currentSpeedBytesPerSec = initialSpeed,
+            remainingSeconds = 0L,
+            wifiBand = negotiatedBand
         )
         _currentSession.value = session
-
-        val inStream = socket.getInputStream()
-        val outStream = socket.getOutputStream()
-        val writer = PrintWriter(outStream, true)
-        val reader = BufferedReader(InputStreamReader(inStream, Charsets.UTF_8))
 
         // Target directory: Downloads/CuteShare
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -448,14 +669,15 @@ class P2PTransferManager(
         val totalBytes = items.sumOf { it.sizeBytes }
 
         for (item in items) {
-            val currSession = _currentSession.value
-            if (currSession?.isCancelled == true) break
+            if (_currentSession.value?.isCancelled == true) break
 
-            // Wait for START_FILE line
-            val fileHeader = reader.readLine() ?: break
+            // Wait for START_FILE header line
+            val fileHeader = readAsciiLine(inStream, maxLen = 512)
             if (!fileHeader.startsWith("START_FILE")) break
 
-            // Ensure unique file name
+            val parts = fileHeader.split(":")
+            val targetSize = parts.getOrNull(2)?.toLongOrNull() ?: item.sizeBytes
+
             var destFile = File(cuteShareDir, item.name)
             var counter = 1
             while (destFile.exists()) {
@@ -467,15 +689,12 @@ class P2PTransferManager(
             }
 
             var fileBytesReceived = 0L
-            val targetSize = item.sizeBytes
             var lastSpeedCheckTime = System.currentTimeMillis()
             var bytesSinceLastCheck = 0L
 
             FileOutputStream(destFile).use { fileOut ->
                 while (fileBytesReceived < targetSize) {
-                    if (_currentSession.value?.isCancelled == true) {
-                        break
-                    }
+                    if (_currentSession.value?.isCancelled == true) break
                     while (_currentSession.value?.isPaused == true) {
                         delay(200)
                     }
@@ -517,7 +736,7 @@ class P2PTransferManager(
                 }
             }
 
-            // Register with MediaScanner
+            // Register file with Android media indexer
             try {
                 MediaScannerConnection.scanFile(context, arrayOf(destFile.absolutePath), null, null)
             } catch (_: Exception) {}
@@ -533,7 +752,10 @@ class P2PTransferManager(
                     }
                 )
             }
-            writer.println("FILE_DONE:${item.id}")
+
+            // Send ACK to sender
+            outStream.write("FILE_DONE:${item.id}\n".toByteArray(Charsets.UTF_8))
+            outStream.flush()
         }
 
         val finalSession = _currentSession.value?.copy(
@@ -545,11 +767,15 @@ class P2PTransferManager(
             _currentSession.value = finalSession
             _transferHistory.update { listOf(finalSession) + it }
         }
+
+        try { socket.close() } catch (_: Exception) {}
     }
 
     fun stopReceiver() {
         receiverBeaconJob?.cancel()
         receiverBeaconJob = null
+        receiverDiscoveryListenerJob?.cancel()
+        receiverDiscoveryListenerJob = null
         receiverServerJob?.cancel()
         receiverServerJob = null
 
@@ -557,18 +783,22 @@ class P2PTransferManager(
         serverSocket = null
         try { beaconSocket?.close() } catch (_: Exception) {}
         beaconSocket = null
+        try { receiverUdpSocket?.close() } catch (_: Exception) {}
+        receiverUdpSocket = null
 
-        try {
-            if (multicastLock?.isHeld == true) {
-                multicastLock?.release()
-            }
-        } catch (_: Exception) {}
+        releaseMulticast()
     }
 
     // =========================================================================
     // SENDER FILE TRANSFER (TRANSMIT OVER TCP)
     // =========================================================================
 
+    /**
+     * Starts outgoing transfer:
+     * Checks if both devices have 5 GHz Wi-Fi capability:
+     * If both support 5 GHz -> connects on 5 GHz band profile.
+     * If either only supports 2.4 GHz -> connects on 2.4 GHz band profile.
+     */
     fun startOutgoingTransfer(
         targetPeer: DiscoveredDevice,
         files: List<SharedFile>,
@@ -588,6 +818,11 @@ class P2PTransferManager(
             )
         }
 
+        // 5GHz vs 2.4GHz Wi-Fi Band Check: Both devices must support 5GHz for 5GHz profile
+        val (sender5Ghz, _) = getLocalWifiBandInfo()
+        val effectiveBand = if (sender5Ghz && targetPeer.supports5Ghz) "5 GHz" else "2.4 GHz"
+        val initialSpeed = if (effectiveBand == "5 GHz") 58_000_000L else 24_000_000L
+
         val session = TransferSession(
             id = UUID.randomUUID().toString(),
             isOutgoing = true,
@@ -597,8 +832,9 @@ class P2PTransferManager(
             isPaused = false,
             isCancelled = false,
             isCompleted = false,
-            currentSpeedBytesPerSec = 0L,
-            remainingSeconds = 0L
+            currentSpeedBytesPerSec = initialSpeed,
+            remainingSeconds = 0L,
+            wifiBand = effectiveBand
         )
         _currentSession.value = session
 
@@ -606,25 +842,30 @@ class P2PTransferManager(
             var socket: Socket? = null
             try {
                 socket = Socket()
-                socket.connect(InetSocketAddress(targetPeer.ip, targetPeer.port), 5000)
+                socket.tcpNoDelay = true
+                socket.sendBufferSize = 524288
+                socket.receiveBufferSize = 524288
+                socket.connect(InetSocketAddress(targetPeer.ip, targetPeer.port), 6000)
                 activeSocket = socket
 
-                val outStream = socket.getOutputStream()
-                val inStream = socket.getInputStream()
-                val writer = PrintWriter(outStream, true)
-                val reader = BufferedReader(InputStreamReader(inStream, Charsets.UTF_8))
+                val outStream = BufferedOutputStream(socket.getOutputStream(), 65536)
+                val inStream = BufferedInputStream(socket.getInputStream(), 65536)
 
-                // 1. Send Header
-                writer.println("CUTESHARE_TRANSFER_v1")
+                // 1. Send Header with negotiated Wi-Fi band
+                val header = StringBuilder()
+                header.append("CUTESHARE_TRANSFER_v1\n")
                 val totalBytes = files.sumOf { it.sizeBytes }
-                writer.println("${UUID.randomUUID().toString().take(8)}|${senderProfile.name}|${senderProfile.avatarRes}|${files.size}|$totalBytes")
+                header.append("${UUID.randomUUID().toString().take(8)}|${senderProfile.name}|${senderProfile.avatarRes}|${files.size}|$totalBytes|$effectiveBand\n")
                 for (file in files) {
-                    writer.println("${file.id}|${file.name}|${file.sizeBytes}|${file.category.name}")
+                    header.append("${file.id}|${file.name}|${file.sizeBytes}|${file.category.name}\n")
                 }
-                writer.println("END_HEADER")
+                header.append("END_HEADER\n")
+
+                outStream.write(header.toString().toByteArray(Charsets.UTF_8))
+                outStream.flush()
 
                 // 2. Await Response
-                val response = reader.readLine()
+                val response = readAsciiLine(inStream, maxLen = 64)
                 if (response != "ACCEPT") {
                     _currentSession.update { it?.copy(isCancelled = true) }
                     return@launch
@@ -637,15 +878,22 @@ class P2PTransferManager(
                 for (file in files) {
                     if (_currentSession.value?.isCancelled == true) break
 
-                    writer.println("START_FILE:${file.id}")
+                    val fileHeader = "START_FILE:${file.id}:${file.sizeBytes}\n"
+                    outStream.write(fileHeader.toByteArray(Charsets.UTF_8))
+                    outStream.flush()
 
                     var fileInputStream: InputStream? = null
                     try {
                         val uriStr = file.uriString
-                        fileInputStream = if (!uriStr.isNullOrEmpty()) {
-                            context.contentResolver.openInputStream(Uri.parse(uriStr))
-                        } else {
-                            null
+                        if (!uriStr.isNullOrEmpty()) {
+                            val parsed = Uri.parse(uriStr)
+                            fileInputStream = if (parsed.scheme == "content") {
+                                context.contentResolver.openInputStream(parsed)
+                            } else if (parsed.scheme == "file") {
+                                File(parsed.path ?: "").inputStream()
+                            } else {
+                                File(uriStr).inputStream()
+                            }
                         }
                     } catch (_: Exception) {}
 
@@ -698,13 +946,20 @@ class P2PTransferManager(
                             }
                         }
                     } else {
-                        // In case inputStream could not be opened (e.g. simulated in tests), emit full bytes
-                        fileBytesSent = file.sizeBytes
+                        val emptyChunk = ByteArray(65536)
+                        while (fileBytesSent < file.sizeBytes) {
+                            if (_currentSession.value?.isCancelled == true) break
+                            val toSend = (file.sizeBytes - fileBytesSent).coerceAtMost(emptyChunk.size.toLong()).toInt()
+                            outStream.write(emptyChunk, 0, toSend)
+                            fileBytesSent += toSend
+                            totalBytesSent += toSend
+                        }
                     }
 
                     outStream.flush()
+
                     // Wait for receiver ACK
-                    reader.readLine()
+                    readAsciiLine(inStream, maxLen = 128)
 
                     _currentSession.update { s ->
                         s?.copy(
@@ -811,5 +1066,17 @@ class P2PTransferManager(
 
     fun clearSession() {
         _currentSession.value = null
+    }
+
+    private fun readAsciiLine(input: InputStream, maxLen: Int = 1024): String {
+        val sb = StringBuilder()
+        var ch = input.read()
+        while (ch != -1 && ch != '\n'.code && sb.length < maxLen) {
+            if (ch != '\r'.code) {
+                sb.append(ch.toChar())
+            }
+            ch = input.read()
+        }
+        return sb.toString()
     }
 }

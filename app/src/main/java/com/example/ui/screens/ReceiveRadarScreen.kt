@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.Context
+import android.net.wifi.WifiManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -36,26 +38,23 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +74,16 @@ fun ReceiveRadarScreen(
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val is5GhzSupported = remember {
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifi?.is5GHzBandSupported ?: true
+        } catch (_: Exception) {
+            true
+        }
+    }
+
     val userAvatarGlow = remember(userProfile.avatarRes) {
         CartoonAvatars.list.find { it.drawableRes == userProfile.avatarRes }?.glowColor ?: Color(0xFF00E5FF)
     }
@@ -110,7 +119,7 @@ fun ReceiveRadarScreen(
             centerPhotoRadiusDp = centerPhotoRadiusDp
         )
 
-        // Top Header: Back button on the left, Centered title, clean spacer on the right (NO QR icon)
+        // Top Header: Back button on the left, Centered title, clean spacer on the right
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -139,42 +148,81 @@ fun ReceiveRadarScreen(
                 color = MaterialTheme.colorScheme.onSurface
             )
 
-            // Balance placeholder to keep title centered (QR code icon removed)
+            // Balance placeholder to keep title centered
             Spacer(modifier = Modifier.size(44.dp))
         }
 
-        // USER NAME BADGE: 25% UP OF CENTER SCREEN
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        // USER NAME BADGE: MOVED UP 50% (37.5% UP OF CENTER SCREEN) - NO IP SHOWN
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .align(Alignment.Center)
-                .offset(y = -(maxHeight * 0.25f))
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
-                .border(1.dp, userAvatarGlow.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
-                .padding(horizontal = 18.dp, vertical = 9.dp)
+                .offset(y = -(maxHeight * 0.375f))
         ) {
-            Box(
-                contentAlignment = Alignment.Center,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .size(22.dp)
-                    .clip(CircleShape)
-                    .background(userAvatarGlow.copy(alpha = 0.2f))
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
+                    .border(1.dp, userAvatarGlow.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 18.dp, vertical = 9.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Person,
-                    contentDescription = null,
-                    tint = userAvatarGlow,
-                    modifier = Modifier.size(14.dp)
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(userAvatarGlow.copy(alpha = 0.2f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Person,
+                        contentDescription = null,
+                        tint = userAvatarGlow,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = userProfile.name,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = userProfile.name,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Wi-Fi Band Indicator Badge (5 GHz / 2.4 GHz) - No IP shown
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
+                    .border(1.dp, userAvatarGlow.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(userAvatarGlow.copy(alpha = 0.2f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Wifi,
+                        contentDescription = null,
+                        tint = userAvatarGlow,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (is5GhzSupported) "5 GHz Ultra-Speed Ready" else "2.4 GHz Ready",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         // USER PROFILE PHOTO: AT EXACT CENTER OF SCREEN (with radar waves around it)

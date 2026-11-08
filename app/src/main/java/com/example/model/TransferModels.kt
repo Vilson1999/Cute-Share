@@ -38,7 +38,8 @@ data class TransferSession(
     val isCancelled: Boolean = false,
     val isCompleted: Boolean = false,
     val currentSpeedBytesPerSec: Long = 34_500_000L, // 34.5 MB/s initial
-    val remainingSeconds: Long = 12L
+    val remainingSeconds: Long = 12L,
+    val wifiBand: String = "5 GHz"
 ) {
     val totalSizeBytes: Long
         get() = files.sumOf { it.sizeBytes }

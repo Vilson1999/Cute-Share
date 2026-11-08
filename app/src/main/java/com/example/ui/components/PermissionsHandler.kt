@@ -1,6 +1,8 @@
 package com.example.ui.components
 
 import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -35,9 +37,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 
 @Composable
 fun PermissionsHandler(
@@ -45,6 +50,7 @@ fun PermissionsHandler(
     onDismiss: () -> Unit,
     onPermissionsResult: (Boolean) -> Unit
 ) {
+    val context = LocalContext.current
     val permissionsToRequest = buildList {
         // Storage & Media permissions
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -75,6 +81,12 @@ fun PermissionsHandler(
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
+        // Mark that permissions have been asked once
+        context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("has_asked_permissions", true)
+            .apply()
+
         val anyGranted = results.values.any { it }
         onPermissionsResult(anyGranted)
         onDismiss()
@@ -82,9 +94,16 @@ fun PermissionsHandler(
 
     if (showDialog) {
         AlertDialog(
-            onDismissRequest = onDismiss,
+            onDismissRequest = {
+                context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("has_asked_permissions", true)
+                    .apply()
+                onDismiss()
+            },
             shape = RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.testTag("permissions_dialog"),
             title = {
                 Text(
                     text = "Allow Sharing Permissions",
@@ -136,19 +155,33 @@ fun PermissionsHandler(
             confirmButton = {
                 Button(
                     onClick = {
+                        context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putBoolean("has_asked_permissions", true)
+                            .apply()
                         permissionLauncher.launch(permissionsToRequest)
                     },
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
+                    ),
+                    modifier = Modifier.testTag("grant_permissions_button")
                 ) {
                     Text("Grant Permissions", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = onDismiss) {
+                TextButton(
+                    onClick = {
+                        context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putBoolean("has_asked_permissions", true)
+                            .apply()
+                        onDismiss()
+                    },
+                    modifier = Modifier.testTag("dismiss_permissions_button")
+                ) {
                     Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
