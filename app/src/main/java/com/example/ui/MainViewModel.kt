@@ -1,23 +1,33 @@
 package com.example.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.R
+import com.example.data.NetworkUtils
+import com.example.data.P2PTransferManager
 import com.example.data.TransferManager
+import com.example.model.CartoonAvatars
 import com.example.model.CuteAvatar
+import com.example.model.DiscoveredDevice
 import com.example.model.SharedFile
 import com.example.model.TransferSession
 import com.example.model.UserProfile
 import com.example.ui.navigation.Screen
+import com.example.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 class MainViewModel : ViewModel() {
 
-    private val transferManager = TransferManager(viewModelScope)
+    private val localTransferManager = TransferManager(viewModelScope)
+    private var p2pTransferManager: P2PTransferManager? = null
 
-    // User Profile with default avatar and name; starts as not created to show profile creation on first start
+    // User Profile
     private val _userProfile = MutableStateFlow(
         UserProfile(
             name = "Cute Explorer",
@@ -27,21 +37,86 @@ class MainViewModel : ViewModel() {
     )
     val userProfile: StateFlow<UserProfile> = _userProfile.asStateFlow()
 
-    // ONBOARDING (Create Profile) is the first screen at first app start
+    // Screen navigation
     private val _currentScreen = MutableStateFlow(Screen.ONBOARDING)
     val currentScreen: StateFlow<Screen> = _currentScreen.asStateFlow()
 
     private val _pendingSharedFiles = MutableStateFlow<List<SharedFile>>(emptyList())
     val pendingSharedFiles: StateFlow<List<SharedFile>> = _pendingSharedFiles.asStateFlow()
 
-    val currentSession: StateFlow<TransferSession?> = transferManager.currentSession
-    val transferHistory: StateFlow<List<TransferSession>> = transferManager.transferHistory
+    // Active session
+    private val _activeSession = MutableStateFlow<TransferSession?>(null)
+    val currentSession: StateFlow<TransferSession?> = _activeSession.asStateFlow()
 
-    private val _themeMode = MutableStateFlow(com.example.ui.theme.ThemeMode.SYSTEM)
-    val themeMode: StateFlow<com.example.ui.theme.ThemeMode> = _themeMode.asStateFlow()
+    private val _transferHistory = MutableStateFlow<List<TransferSession>>(emptyList())
+    val transferHistory: StateFlow<List<TransferSession>> = _transferHistory.asStateFlow()
+
+    // Real discovered peers (ONLY devices that currently have the Receive screen open)
+    private val _discoveredPeers = MutableStateFlow<List<DiscoveredDevice>>(emptyList())
+    val discoveredPeers: StateFlow<List<DiscoveredDevice>> = _discoveredPeers.asStateFlow()
+
+    // Real incoming transfer prompt
+    private val _incomingRequest = MutableStateFlow<P2PTransferManager.IncomingTransferRequest?>(null)
+    val incomingRequest: StateFlow<P2PTransferManager.IncomingTransferRequest?> = _incomingRequest.asStateFlow()
+
+    // Theme mode
+    private val _themeMode = MutableStateFlow(ThemeMode.SYSTEM)
+    val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
 
     private val _showPermissionDialog = MutableStateFlow(false)
     val showPermissionDialog: StateFlow<Boolean> = _showPermissionDialog.asStateFlow()
+
+    private val _isAddingMoreToActiveSession = MutableStateFlow(false)
+    val isAddingMoreToActiveSession: StateFlow<Boolean> = _isAddingMoreToActiveSession.asStateFlow()
+
+    init {
+        // Collect from local transfer manager for testing and fallback
+        viewModelScope.launch {
+            localTransferManager.currentSession.collect { session ->
+                if (p2pTransferManager?.currentSession?.value == null) {
+                    _activeSession.value = session
+                }
+            }
+        }
+        viewModelScope.launch {
+            localTransferManager.transferHistory.collect { history ->
+                if (p2pTransferManager?.transferHistory?.value?.isEmpty() != false) {
+                    _transferHistory.value = history
+                }
+            }
+        }
+    }
+
+    fun attachContext(context: Context) {
+        if (p2pTransferManager != null) return
+        val manager = P2PTransferManager(context.applicationContext, viewModelScope)
+        p2pTransferManager = manager
+
+        viewModelScope.launch {
+            manager.currentSession.collect { session ->
+                if (session != null) {
+                    _activeSession.value = session
+                }
+            }
+        }
+        viewModelScope.launch {
+            manager.transferHistory.collect { history ->
+                if (history.isNotEmpty()) {
+                    _transferHistory.value = history
+                }
+            }
+        }
+        viewModelScope.launch {
+            manager.discoveredPeers.collect { peers ->
+                _discoveredPeers.value = peers
+            }
+        }
+        viewModelScope.launch {
+            manager.incomingRequest.collect { req ->
+                _incomingRequest.value = req
+            }
+        }
+    }
 
     fun triggerPermissionRequest() {
         _showPermissionDialog.value = true
@@ -57,11 +132,7 @@ class MainViewModel : ViewModel() {
             avatarRes = avatarRes,
             isCreated = isCreated
         )
-        if (isCreated) {
-            _currentScreen.value = Screen.HOME
-        } else {
-            _currentScreen.value = Screen.ONBOARDING
-        }
+        _currentScreen.value = if (isCreated) Screen.HOME else Screen.ONBOARDING
     }
 
     fun saveUserProfile(name: String, avatarRes: Int) {
@@ -89,16 +160,14 @@ class MainViewModel : ViewModel() {
 
     fun toggleTheme() {
         _themeMode.value = when (_themeMode.value) {
-            com.example.ui.theme.ThemeMode.SYSTEM -> com.example.ui.theme.ThemeMode.DARK
-            com.example.ui.theme.ThemeMode.DARK -> com.example.ui.theme.ThemeMode.LIGHT
-            com.example.ui.theme.ThemeMode.LIGHT -> com.example.ui.theme.ThemeMode.SYSTEM
+            ThemeMode.SYSTEM -> ThemeMode.DARK
+            ThemeMode.DARK -> ThemeMode.LIGHT
+            ThemeMode.LIGHT -> ThemeMode.SYSTEM
         }
     }
 
-    private val _isAddingMoreToActiveSession = MutableStateFlow(false)
-    val isAddingMoreToActiveSession: StateFlow<Boolean> = _isAddingMoreToActiveSession.asStateFlow()
-
     fun navigateTo(screen: Screen) {
+        handleScreenLifecycle(from = _currentScreen.value, to = screen)
         _currentScreen.value = screen
     }
 
@@ -113,82 +182,150 @@ class MainViewModel : ViewModel() {
             _currentScreen.value = Screen.TRANSFER
             return
         }
-        when (_currentScreen.value) {
-            Screen.PEER_SELECTION -> _currentScreen.value = Screen.FILE_PICKER
-            Screen.FILE_PICKER, Screen.RECEIVE_RADAR, Screen.TRANSFER -> _currentScreen.value = Screen.HOME
-            Screen.ONBOARDING -> {
-                if (_userProfile.value.isCreated) {
-                    _currentScreen.value = Screen.HOME
-                }
-            }
-            Screen.HOME -> Unit
+
+        val from = _currentScreen.value
+        val to = when (from) {
+            Screen.PEER_SELECTION -> Screen.FILE_PICKER
+            Screen.FILE_PICKER, Screen.RECEIVE_RADAR, Screen.TRANSFER -> Screen.HOME
+            Screen.ONBOARDING -> if (_userProfile.value.isCreated) Screen.HOME else Screen.ONBOARDING
+            Screen.HOME -> Screen.HOME
+        }
+        handleScreenLifecycle(from = from, to = to)
+        _currentScreen.value = to
+    }
+
+    private fun handleScreenLifecycle(from: Screen, to: Screen) {
+        if (from == Screen.RECEIVE_RADAR && to != Screen.RECEIVE_RADAR) {
+            p2pTransferManager?.stopReceiver()
+        }
+        if (from == Screen.PEER_SELECTION && to != Screen.PEER_SELECTION) {
+            p2pTransferManager?.stopDiscovery()
+        }
+        if (to == Screen.RECEIVE_RADAR) {
+            startReceiverMode()
+        }
+        if (to == Screen.PEER_SELECTION) {
+            startDiscoveryMode()
         }
     }
 
-    // When files are selected in inbuild File Picker:
-    // If adding more files, appends directly to bottom of active transfer without disconnecting!
-    // Otherwise navigates to peer selection screen.
+    fun startReceiverMode() {
+        p2pTransferManager?.startReceiver(
+            userProfile = _userProfile.value,
+            onSessionStarted = {
+                _currentScreen.value = Screen.TRANSFER
+            }
+        )
+    }
+
+    fun stopReceiverMode() {
+        p2pTransferManager?.stopReceiver()
+    }
+
+    fun startDiscoveryMode() {
+        p2pTransferManager?.startDiscovery(_userProfile.value)
+    }
+
+    fun stopDiscoveryMode() {
+        p2pTransferManager?.stopDiscovery()
+    }
+
+    fun addManualPeer(ip: String) {
+        p2pTransferManager?.addManualPeer(ip)
+    }
+
     fun onFilesSelectedForSharing(files: List<SharedFile>) {
         if (files.isEmpty()) return
         if (_isAddingMoreToActiveSession.value) {
             _isAddingMoreToActiveSession.value = false
-            transferManager.addFilesToActiveSession(files)
+            addMoreFilesToTransfer(files)
             _currentScreen.value = Screen.TRANSFER
         } else {
             _pendingSharedFiles.value = files
+            startDiscoveryMode()
             _currentScreen.value = Screen.PEER_SELECTION
         }
     }
 
-    // Add more files to active transfer session with the same user without stopping or disconnecting
     fun addMoreFilesToTransfer(files: List<SharedFile>) {
         if (files.isEmpty()) return
-        transferManager.addFilesToActiveSession(files)
+        localTransferManager.addFilesToActiveSession(files)
+        p2pTransferManager?.addFilesToActiveSession(files)
     }
 
-    // Handle files shared to Cute Share from external apps (e.g. Gallery, File Manager, Video Player)
     fun handleExternalSharedFiles(files: List<SharedFile>) {
         if (files.isEmpty()) return
         _pendingSharedFiles.value = files
+        startDiscoveryMode()
         _currentScreen.value = Screen.PEER_SELECTION
     }
 
-    // When person is selected in Peer Selection screen, start transfer and open monitor
+    // Connect to real discovered peer over TCP socket
+    fun onPeerSelectedForTransfer(peer: DiscoveredDevice) {
+        val files = _pendingSharedFiles.value
+        if (files.isEmpty()) return
+
+        p2pTransferManager?.stopDiscovery()
+        p2pTransferManager?.startOutgoingTransfer(
+            targetPeer = peer,
+            files = files,
+            senderProfile = _userProfile.value
+        )
+
+        // Mirror in localTransferManager for consistent state
+        localTransferManager.startTransfer(
+            files = files,
+            isOutgoing = true,
+            peerName = peer.name,
+            avatarRes = peer.avatarRes
+        )
+
+        _currentScreen.value = Screen.TRANSFER
+    }
+
+    // Backward-compatible for tests / avatars
     fun onPeerSelectedForTransfer(peer: CuteAvatar) {
         val files = _pendingSharedFiles.value
         if (files.isEmpty()) return
-        transferManager.startTransfer(
+
+        localTransferManager.startTransfer(
             files = files,
             isOutgoing = true,
             peerName = peer.name,
             avatarRes = peer.drawableRes
         )
+        _activeSession.value = localTransferManager.currentSession.value
         _currentScreen.value = Screen.TRANSFER
     }
 
     fun startReceiveTransfer(files: List<SharedFile>, senderAvatar: CuteAvatar) {
-        transferManager.startTransfer(
+        localTransferManager.startTransfer(
             files = files,
             isOutgoing = false,
             peerName = senderAvatar.name,
             avatarRes = senderAvatar.drawableRes
         )
+        _activeSession.value = localTransferManager.currentSession.value
         _currentScreen.value = Screen.TRANSFER
     }
 
     fun toggleSessionPause() {
-        transferManager.toggleSessionPause()
+        localTransferManager.toggleSessionPause()
+        p2pTransferManager?.toggleSessionPause()
     }
 
     fun cancelSession() {
-        transferManager.cancelSession()
+        localTransferManager.cancelSession()
+        p2pTransferManager?.cancelSession()
     }
 
     fun toggleFilePause(fileId: String) {
-        transferManager.toggleFilePause(fileId)
+        localTransferManager.toggleFilePause(fileId)
+        p2pTransferManager?.toggleFilePause(fileId)
     }
 
     fun cancelFile(fileId: String) {
-        transferManager.cancelFile(fileId)
+        localTransferManager.cancelFile(fileId)
+        p2pTransferManager?.cancelFile(fileId)
     }
 }

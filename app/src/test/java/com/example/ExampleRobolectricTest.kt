@@ -135,4 +135,11 @@ class ExampleRobolectricTest {
     assertEquals("Doc.pdf", files?.get(1)?.name)
     assertEquals("Song.mp3", files?.get(2)?.name)
   }
+
+  @Test
+  fun `peer discovery screen starts with empty peer list when no receiver is broadcasting`() {
+    val viewModel = com.example.ui.MainViewModel()
+    // When no receiver has opened their screen, discovered peers is empty
+    assertEquals(0, viewModel.discoveredPeers.value.size)
+  }
 }

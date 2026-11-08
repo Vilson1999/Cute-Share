@@ -22,7 +22,12 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     ndk {
-      abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+      val target = project.findProperty("targetAbi") as String?
+      if (!target.isNullOrEmpty()) {
+        abiFilters.add(target)
+      } else {
+        abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+      }
     }
   }
 

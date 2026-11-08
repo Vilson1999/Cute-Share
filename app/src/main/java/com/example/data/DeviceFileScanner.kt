@@ -2,14 +2,17 @@ package com.example.data
 
 import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import com.example.model.FileCategory
 import com.example.model.SharedFile
 import com.example.model.formatBytes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -22,7 +25,7 @@ object DeviceFileScanner {
         val contentResolver = context.contentResolver
         val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
 
-        fun queryUri(collectionUri: Uri, defaultCategory: FileCategory) {
+        fun queryUri(collectionUri: Uri, defaultCategory: FileCategory, extraSelection: String? = null) {
             val projection = arrayOf(
                 MediaStore.MediaColumns._ID,
                 MediaStore.MediaColumns.DISPLAY_NAME,
@@ -34,7 +37,7 @@ object DeviceFileScanner {
                 contentResolver.query(
                     collectionUri,
                     projection,
-                    null,
+                    extraSelection,
                     null,
                     "${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
                 )?.use { cursor ->
@@ -84,7 +87,7 @@ object DeviceFileScanner {
             }
         }
 
-        // Query device media stores
+        // 1. Query device media stores
         queryUri(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, FileCategory.IMAGE)
         queryUri(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, FileCategory.VIDEO)
         queryUri(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, FileCategory.AUDIO)
@@ -92,6 +95,70 @@ object DeviceFileScanner {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             queryUri(MediaStore.Downloads.EXTERNAL_CONTENT_URI, FileCategory.STORAGE)
         }
+
+        // 2. Query Installed Applications
+        try {
+            val packageManager = context.packageManager
+            val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            val resolveInfos = packageManager.queryIntentActivities(launcherIntent, 0)
+            val seenPackages = mutableSetOf<String>()
+
+            for (resolveInfo in resolveInfos) {
+                try {
+                    val appInfo = resolveInfo.activityInfo.applicationInfo ?: continue
+                    val pkgName = appInfo.packageName ?: continue
+                    if (seenPackages.contains(pkgName) || pkgName == context.packageName) continue
+                    seenPackages.add(pkgName)
+
+                    val appLabel = resolveInfo.loadLabel(packageManager).toString().ifEmpty { pkgName }
+                    val sourceDir = appInfo.sourceDir
+                    if (sourceDir.isNullOrEmpty()) continue
+
+                    val apkFile = File(sourceDir)
+                    if (!apkFile.exists()) continue
+
+                    val size = apkFile.length()
+                    val fileName = if (appLabel.endsWith(".apk", ignoreCase = true)) appLabel else "$appLabel.apk"
+
+                    fileList.add(
+                        SharedFile(
+                            id = "app_$pkgName",
+                            name = fileName,
+                            sizeBytes = size,
+                            formattedSize = formatBytes(size),
+                            category = FileCategory.APP,
+                            extension = "APK",
+                            lastModified = "Installed App",
+                            uriString = Uri.fromFile(apkFile).toString()
+                        )
+                    )
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+
+        // 3. Query Downloaded APK Files in Downloads & Storage
+        try {
+            val downloadsFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            downloadsFolder?.listFiles { file -> file.isFile && file.name.endsWith(".apk", ignoreCase = true) }?.forEach { apkFile ->
+                if (fileList.none { it.name.equals(apkFile.name, ignoreCase = true) }) {
+                    val size = apkFile.length()
+                    fileList.add(
+                        SharedFile(
+                            id = "dl_apk_${apkFile.name}",
+                            name = apkFile.name,
+                            sizeBytes = size,
+                            formattedSize = formatBytes(size),
+                            category = FileCategory.APP,
+                            extension = "APK",
+                            lastModified = "Downloaded APK",
+                            uriString = Uri.fromFile(apkFile).toString()
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {}
 
         fileList
     }

@@ -1,16 +1,18 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -32,13 +35,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Smartphone
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,51 +50,45 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.P2PTransferManager
 import com.example.model.CartoonAvatars
-import com.example.model.CuteAvatar
-import com.example.model.FileCategory
-import com.example.model.SharedFile
 import com.example.model.UserProfile
+import com.example.model.formatBytes
 import com.example.ui.components.StyledIconBox
 import com.example.ui.components.WaveRadarEffect
-import kotlinx.coroutines.delay
-import java.util.UUID
 
 @Composable
 fun ReceiveRadarScreen(
     userProfile: UserProfile,
+    incomingRequest: P2PTransferManager.IncomingTransferRequest? = null,
     onBackClick: () -> Unit,
-    onAcceptTransfer: (List<SharedFile>, CuteAvatar) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Selected User Avatar & Glow color from current profile (not cosmic bunny)
     val userAvatarGlow = remember(userProfile.avatarRes) {
         CartoonAvatars.list.find { it.drawableRes == userProfile.avatarRes }?.glowColor ?: Color(0xFF00E5FF)
     }
 
-    var incomingTransferPrompt by remember { mutableStateOf(false) }
-    val senderAvatar = remember(userProfile.avatarRes) {
-        CartoonAvatars.list.firstOrNull { it.drawableRes != userProfile.avatarRes } ?: CartoonAvatars.list.first()
-    }
-
-    // Auto-discover incoming transfer simulation
-    LaunchedEffect(Unit) {
-        delay(2500)
-        incomingTransferPrompt = true
-    }
-
-    val avatarScale by animateFloatAsState(
-        targetValue = 1.0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-        label = "avatar_scale"
+    // Gentle breathing pulse animation for the central user profile photo
+    val infiniteTransition = rememberInfiniteTransition(label = "avatar_breath")
+    val avatarPulse by infiniteTransition.animateFloat(
+        initialValue = 1.0f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "avatar_pulse"
     )
 
     BoxWithConstraints(
@@ -103,145 +99,157 @@ fun ReceiveRadarScreen(
         contentAlignment = Alignment.Center
     ) {
         val isWide = maxWidth > 600.dp
-        val centerAvatarSize = if (isWide) 160.dp else 138.dp
+        val avatarSize = if (isWide) 160.dp else 140.dp
+        val outerContainerSize = avatarSize + 24.dp
+        val centerPhotoRadiusDp = outerContainerSize / 2
 
-        // Continuous Wave Radar Effect surrounding the user's avatar
+        // Wave Radar Effect originating directly around the center user profile photo
         WaveRadarEffect(
             modifier = Modifier.fillMaxSize(),
-            waveColor = userAvatarGlow
+            waveColor = userAvatarGlow,
+            centerPhotoRadiusDp = centerPhotoRadiusDp
         )
 
-        // Top Header
-        Column(
+        // Top Header: Back button on the left, Centered title, clean spacer on the right (NO QR icon)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // Back Button with styled icon background
-                StyledIconBox(
-                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
-                    size = 44.dp,
-                    iconSize = 22.dp,
-                    backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
-                    iconTint = MaterialTheme.colorScheme.onSurface,
-                    shape = RoundedCornerShape(12.dp),
-                    onClick = onBackClick,
-                    modifier = Modifier.testTag("receive_back_button")
-                )
+            // Back Button with styled icon background
+            StyledIconBox(
+                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                contentDescription = "Back",
+                size = 44.dp,
+                iconSize = 22.dp,
+                backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                iconTint = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(12.dp),
+                onClick = onBackClick,
+                modifier = Modifier.testTag("receive_back_button")
+            )
 
-                Text(
-                    text = "Ready to Receive",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+            Text(
+                text = "Ready to Receive",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
 
-                // Balance placeholder space
-                Spacer(modifier = Modifier.size(44.dp))
-            }
+            // Balance placeholder to keep title centered (QR code icon removed)
+            Spacer(modifier = Modifier.size(44.dp))
         }
 
-        // Center: User's Profile Photo & Name with wave effect surrounding
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+        // USER NAME BADGE: 25% UP OF CENTER SCREEN
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .align(Alignment.Center)
-                .padding(20.dp)
+                .offset(y = -(maxHeight * 0.25f))
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
+                .border(1.dp, userAvatarGlow.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                .padding(horizontal = 18.dp, vertical = 9.dp)
         ) {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(centerAvatarSize + 20.dp)
-                    .border(
-                        width = 2.dp,
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                userAvatarGlow.copy(alpha = 0.8f),
-                                userAvatarGlow.copy(alpha = 0.2f)
-                            )
-                        ),
-                        shape = CircleShape
-                    )
-                    .padding(10.dp)
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(userAvatarGlow.copy(alpha = 0.2f))
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(centerAvatarSize)
-                        .scale(avatarScale)
-                        .shadow(
-                            elevation = 28.dp,
-                            shape = CircleShape,
-                            spotColor = userAvatarGlow,
-                            ambientColor = userAvatarGlow
-                        )
-                        .clip(CircleShape)
-                        .background(Color(0xFF0F172A))
-                        .border(3.dp, userAvatarGlow, CircleShape)
-                        .testTag("center_cute_avatar")
-                ) {
-                    Image(
-                        painter = painterResource(id = userProfile.avatarRes),
-                        contentDescription = userProfile.name,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // User's Device / Display name pill
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
-                    .border(1.dp, userAvatarGlow.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .background(userAvatarGlow.copy(alpha = 0.2f))
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Smartphone,
-                        contentDescription = "Device",
-                        tint = userAvatarGlow,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = userProfile.name,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
+                Icon(
+                    imageVector = Icons.Rounded.Person,
+                    contentDescription = null,
+                    tint = userAvatarGlow,
+                    modifier = Modifier.size(14.dp)
                 )
             }
-
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Visible to nearby devices",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = userProfile.name,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
 
-        // Incoming transfer alert card
+        // USER PROFILE PHOTO: AT EXACT CENTER OF SCREEN (with radar waves around it)
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(outerContainerSize)
+                .scale(avatarPulse)
+                .border(
+                    width = 2.dp,
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            userAvatarGlow.copy(alpha = 0.85f),
+                            userAvatarGlow.copy(alpha = 0.25f)
+                        )
+                    ),
+                    shape = CircleShape
+                )
+                .padding(10.dp)
+        ) {
+            // Central User Profile Photo
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(avatarSize)
+                    .shadow(
+                        elevation = 28.dp,
+                        shape = CircleShape,
+                        spotColor = userAvatarGlow,
+                        ambientColor = userAvatarGlow
+                    )
+                    .clip(CircleShape)
+                    .background(Color(0xFF0F172A))
+                    .border(3.5.dp, userAvatarGlow, CircleShape)
+                    .testTag("center_cute_avatar")
+            ) {
+                Image(
+                    painter = painterResource(id = userProfile.avatarRes),
+                    contentDescription = userProfile.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        // WAITING FOR SENDER TEXT: 25% DOWN OF CENTER OF THE SCREEN
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = maxHeight * 0.25f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                .padding(horizontal = 16.dp, vertical = 7.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(userAvatarGlow)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Waiting for sender...",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+
+        // Real Incoming Transfer Alert Card (appears smoothly when sender initiates connection)
         AnimatedVisibility(
-            visible = incomingTransferPrompt,
+            visible = incomingRequest != null,
             enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
@@ -249,97 +257,88 @@ fun ReceiveRadarScreen(
                 .navigationBarsPadding()
                 .padding(16.dp)
         ) {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                tonalElevation = 10.dp,
-                shadowElevation = 20.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 520.dp)
-                    .border(1.5.dp, senderAvatar.glowColor.copy(alpha = 0.4f), RoundedCornerShape(24.dp))
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.padding(16.dp)
+            if (incomingRequest != null) {
+                val req = incomingRequest
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    tonalElevation = 10.dp,
+                    shadowElevation = 20.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 520.dp)
+                        .border(1.5.dp, Color(0xFF00E5FF).copy(alpha = 0.5f), RoundedCornerShape(24.dp))
                 ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(54.dp)
-                            .clip(CircleShape)
-                            .border(2.dp, senderAvatar.glowColor, CircleShape)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.padding(16.dp)
                     ) {
-                        Image(
-                            painter = painterResource(id = senderAvatar.drawableRes),
-                            contentDescription = senderAvatar.name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(14.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = senderAvatar.name,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "Incoming Transfer",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(10.dp))
-
-                    StyledIconBox(
-                        icon = Icons.Rounded.Close,
-                        contentDescription = "Decline",
-                        size = 40.dp,
-                        iconSize = 20.dp,
-                        backgroundColor = Color(0xFF334155),
-                        iconTint = Color(0xFFF43F5E),
-                        borderColor = Color(0xFFF43F5E).copy(alpha = 0.3f),
-                        shape = CircleShape,
-                        onClick = { incomingTransferPrompt = false },
-                        modifier = Modifier.testTag("decline_transfer_button")
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    StyledIconBox(
-                        icon = Icons.Rounded.Check,
-                        contentDescription = "Accept",
-                        size = 44.dp,
-                        iconSize = 22.dp,
-                        backgroundColor = Color(0xFF00E5FF),
-                        iconTint = Color(0xFF0F172A),
-                        borderColor = Color.White.copy(alpha = 0.4f),
-                        shape = CircleShape,
-                        elevation = 6.dp,
-                        onClick = {
-                            incomingTransferPrompt = false
-                            val incomingFiles = listOf(
-                                SharedFile(
-                                    id = UUID.randomUUID().toString(),
-                                    name = "Received_Package_${System.currentTimeMillis() % 1000}.bin",
-                                    sizeBytes = 25_000_000L,
-                                    formattedSize = "25 MB",
-                                    category = FileCategory.STORAGE,
-                                    extension = "BIN",
-                                    lastModified = "Just now"
-                                )
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(54.dp)
+                                .clip(CircleShape)
+                                .border(2.dp, Color(0xFF00E5FF), CircleShape)
+                        ) {
+                            Image(
+                                painter = painterResource(id = req.sender.avatarRes),
+                                contentDescription = req.sender.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
                             )
-                            onAcceptTransfer(incomingFiles, senderAvatar)
-                        },
-                        modifier = Modifier.testTag("accept_transfer_button")
-                    )
+                        }
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = req.sender.name,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Wants to share ${req.files.size} file(s) (${formatBytes(req.totalSize)})",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        // Decline Button with styled icon background
+                        StyledIconBox(
+                            icon = Icons.Rounded.Close,
+                            contentDescription = "Decline",
+                            size = 40.dp,
+                            iconSize = 20.dp,
+                            backgroundColor = Color(0xFF334155),
+                            iconTint = Color(0xFFF43F5E),
+                            borderColor = Color(0xFFF43F5E).copy(alpha = 0.3f),
+                            shape = CircleShape,
+                            onClick = req.declineAction,
+                            modifier = Modifier.testTag("decline_transfer_button")
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Accept Button with styled icon background
+                        StyledIconBox(
+                            icon = Icons.Rounded.Check,
+                            contentDescription = "Accept",
+                            size = 44.dp,
+                            iconSize = 22.dp,
+                            backgroundColor = Color(0xFF00E5FF),
+                            iconTint = Color(0xFF0F172A),
+                            borderColor = Color.White.copy(alpha = 0.4f),
+                            shape = CircleShape,
+                            elevation = 6.dp,
+                            onClick = req.acceptAction,
+                            modifier = Modifier.testTag("accept_transfer_button")
+                        )
+                    }
                 }
             }
         }

@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.PermissionsHandler
@@ -24,6 +26,11 @@ fun QuickShareApp(
     viewModel: MainViewModel = viewModel(),
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    LaunchedEffect(context) {
+        viewModel.attachContext(context)
+    }
+
     val currentScreen by viewModel.currentScreen.collectAsStateWithLifecycle()
     val currentSession by viewModel.currentSession.collectAsStateWithLifecycle()
     val transferHistory by viewModel.transferHistory.collectAsStateWithLifecycle()
@@ -32,6 +39,8 @@ fun QuickShareApp(
     val pendingSharedFiles by viewModel.pendingSharedFiles.collectAsStateWithLifecycle()
     val isAddingMore by viewModel.isAddingMoreToActiveSession.collectAsStateWithLifecycle()
     val showPermissionDialog by viewModel.showPermissionDialog.collectAsStateWithLifecycle()
+    val discoveredPeers by viewModel.discoveredPeers.collectAsStateWithLifecycle()
+    val incomingRequest by viewModel.incomingRequest.collectAsStateWithLifecycle()
 
     BackHandler(enabled = currentScreen != Screen.HOME && userProfile.isCreated) {
         viewModel.onBack()
@@ -88,6 +97,7 @@ fun QuickShareApp(
                     Screen.PEER_SELECTION -> PeerSelectionScreen(
                         userProfile = userProfile,
                         filesToShare = pendingSharedFiles,
+                        discoveredPeers = discoveredPeers,
                         onBackClick = { viewModel.onBack() },
                         onSelectPeer = { peer ->
                             viewModel.onPeerSelectedForTransfer(peer)
@@ -96,10 +106,8 @@ fun QuickShareApp(
 
                     Screen.RECEIVE_RADAR -> ReceiveRadarScreen(
                         userProfile = userProfile,
-                        onBackClick = { viewModel.onBack() },
-                        onAcceptTransfer = { files, avatar ->
-                            viewModel.startReceiveTransfer(files, avatar)
-                        }
+                        incomingRequest = incomingRequest,
+                        onBackClick = { viewModel.onBack() }
                     )
 
                     Screen.TRANSFER -> TransferScreen(

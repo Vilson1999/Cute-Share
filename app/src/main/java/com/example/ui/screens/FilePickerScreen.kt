@@ -512,11 +512,31 @@ private fun FileListItem(
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
-                    text = " • ${file.lastModified}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                )
+                if (file.category == FileCategory.APP) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (file.lastModified == "Installed App") Color(0xFF10B981).copy(alpha = 0.15f)
+                                else Color(0xFF00E5FF).copy(alpha = 0.15f)
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = file.lastModified,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (file.lastModified == "Installed App") Color(0xFF10B981) else Color(0xFF0284C7)
+                        )
+                    }
+                } else {
+                    Text(
+                        text = " • ${file.lastModified}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
             }
         }
 

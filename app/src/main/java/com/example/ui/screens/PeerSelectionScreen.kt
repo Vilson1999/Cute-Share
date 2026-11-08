@@ -56,8 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import com.example.model.CartoonAvatars
-import com.example.model.CuteAvatar
+import com.example.model.DiscoveredDevice
 import com.example.model.SharedFile
 import com.example.model.UserProfile
 import com.example.model.formatBytes
@@ -69,8 +68,9 @@ import kotlin.math.sin
 fun PeerSelectionScreen(
     userProfile: UserProfile,
     filesToShare: List<SharedFile>,
+    discoveredPeers: List<DiscoveredDevice> = emptyList(),
     onBackClick: () -> Unit,
-    onSelectPeer: (CuteAvatar) -> Unit,
+    onSelectPeer: (DiscoveredDevice) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val totalSize = remember(filesToShare) { filesToShare.sumOf { it.sizeBytes } }
@@ -128,8 +128,6 @@ fun PeerSelectionScreen(
         label = "user_pulse"
     )
 
-    val peers = remember { CartoonAvatars.list }
-
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
@@ -142,34 +140,33 @@ fun PeerSelectionScreen(
         val heightPx = constraints.maxHeight.toFloat()
         val minDim = minOf(widthPx, heightPx)
 
-        // Animated Search Flow Canvas radiating outward from the center sharing user
+        // Animated Search Flow Canvas radiating outward directly from around the center sharing user
         Canvas(modifier = Modifier.fillMaxSize()) {
             val center = Offset(size.width / 2f, size.height / 2f)
-            val maxRadius = minOf(size.width, size.height) * 0.46f
-
+            val startRadius = 54.dp.toPx()
+            val maxRadius = minOf(size.width, size.height) * 0.48f
             val waves = listOf(wave1, wave2, wave3, wave4)
 
-            // Radiant glow disk
+            // Radiant glow disk directly around user photo
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        Color(0xFF00E5FF).copy(alpha = 0.18f),
+                        Color(0xFF00E5FF).copy(alpha = 0.22f),
                         Color(0xFF10B981).copy(alpha = 0.08f),
                         Color.Transparent
                     ),
                     center = center,
-                    radius = maxRadius * 0.7f
+                    radius = startRadius * 1.5f
                 ),
                 center = center,
-                radius = maxRadius * 0.7f
+                radius = startRadius * 1.5f
             )
 
-            // Radiating search waves
+            // Radiating search waves starting directly around the user photo
             waves.forEach { progress ->
-                val radius = maxRadius * progress
-                val alpha = (1f - progress).coerceIn(0f, 1f) * 0.7f
+                val radius = startRadius + (maxRadius - startRadius) * progress
+                val alpha = (1f - progress).coerceIn(0f, 1f) * 0.72f
 
-                // Outer wave line
                 drawCircle(
                     color = Color(0xFF00E5FF).copy(alpha = alpha),
                     radius = radius,
@@ -177,7 +174,6 @@ fun PeerSelectionScreen(
                     style = Stroke(width = 2.dp.toPx() * (1f - progress * 0.5f))
                 )
 
-                // Concentric faint glow ring
                 drawCircle(
                     color = Color(0xFF10B981).copy(alpha = alpha * 0.25f),
                     radius = radius * 0.95f,
@@ -187,7 +183,7 @@ fun PeerSelectionScreen(
             }
         }
 
-        // Clean Top Bar: Back button & sharing summary
+        // Clean Top Bar: Back button and files summary badge (no extra buttons)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -240,120 +236,161 @@ fun PeerSelectionScreen(
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
+
+            // Balanced spacing for clean centered alignment
+            Spacer(modifier = Modifier.size(44.dp))
         }
 
-        // CENTER: Sharing User Profile Photo with radar search flow
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+        // USER NAME: 25% UP OF CENTER OF THE SCREEN
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .align(Alignment.Center)
+                .offset(y = -(maxHeight * 0.25f))
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
+                .border(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                .padding(horizontal = 16.dp, vertical = 8.dp)
                 .zIndex(5f)
         ) {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(108.dp)
-                    .scale(pulseUserScale)
-                    .border(2.dp, Color(0xFF00E5FF).copy(alpha = 0.6f), CircleShape)
-                    .padding(6.dp)
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF00E5FF).copy(alpha = 0.2f))
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .shadow(elevation = 24.dp, shape = CircleShape, spotColor = Color(0xFF00E5FF))
-                        .clip(CircleShape)
-                        .background(Color(0xFF0F172A))
-                        .border(3.dp, Color(0xFF00E5FF), CircleShape)
-                        .testTag("center_sharing_user_photo")
-                ) {
-                    Image(
-                        painter = painterResource(id = userProfile.avatarRes),
-                        contentDescription = "My Profile Photo",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Rounded.NearMe,
+                    contentDescription = null,
+                    tint = Color(0xFF00E5FF),
+                    modifier = Modifier.size(12.dp)
+                )
             }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = userProfile.name,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // User Name label
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+        // CENTER: Sharing User Profile Photo with radar waves radiating around it
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(108.dp)
+                .scale(pulseUserScale)
+                .border(2.dp, Color(0xFF00E5FF).copy(alpha = 0.6f), CircleShape)
+                .padding(6.dp)
+                .zIndex(5f)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f))
-                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .fillMaxSize()
+                    .shadow(elevation = 24.dp, shape = CircleShape, spotColor = Color(0xFF00E5FF))
+                    .clip(CircleShape)
+                    .background(Color(0xFF0F172A))
+                    .border(3.dp, Color(0xFF00E5FF), CircleShape)
+                    .testTag("center_sharing_user_photo")
             ) {
-                Text(
-                    text = userProfile.name,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
+                Image(
+                    painter = painterResource(id = userProfile.avatarRes),
+                    contentDescription = "My Profile Photo",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
 
-        // Surrounding: All Cute Share Receive Accounts User Photo Icons at organic positions around sharing user
-        val maxRadiusDp = with(density) { (minDim * 0.38f).toDp() }
-        val orbitInner = maxRadiusDp * 0.60f
-        val orbitOuter = maxRadiusDp * 0.95f
-
-        peers.forEachIndexed { index, peer ->
-            val isOuter = index % 2 == 1
-            val radius = if (isOuter) orbitOuter else orbitInner
-            val angleStep = (2.0 * Math.PI) / peers.size
-            val angle = index * angleStep + (if (isOuter) 0.32 else 0.0)
-
-            val offsetX = (radius.value * cos(angle)).dp
-            val offsetY = (radius.value * sin(angle)).dp
-
-            PeerAccountBubble(
-                peer = peer,
-                onClick = { onSelectPeer(peer) },
+        // WAITING FOR RECEIVER TEXT: 25% BELOW OF CENTER OF THE SCREEN
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = maxHeight * 0.25f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                .padding(horizontal = 16.dp, vertical = 7.dp)
+                .zIndex(5f)
+        ) {
+            Box(
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(x = offsetX, y = offsetY)
-                    .zIndex(6f)
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF00E5FF))
             )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (discoveredPeers.isEmpty()) "Waiting for receiver..." else "Select device to send",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+
+        // ONLY REAL READY-TO-RECEIVE DEVICES (No unnecessary or dummy device profiles)
+        if (discoveredPeers.isNotEmpty()) {
+            val maxRadiusDp = with(density) { (minDim * 0.38f).toDp() }
+            val orbitInner = maxRadiusDp * 0.65f
+            val orbitOuter = maxRadiusDp * 0.95f
+
+            discoveredPeers.forEachIndexed { index, peer ->
+                val isOuter = index % 2 == 1
+                val radius = if (isOuter) orbitOuter else orbitInner
+                val angleStep = (2.0 * Math.PI) / discoveredPeers.size
+                val angle = index * angleStep + (if (isOuter) 0.32 else 0.0)
+
+                val offsetX = (radius.value * cos(angle)).dp
+                val offsetY = (radius.value * sin(angle)).dp
+
+                RealPeerAccountBubble(
+                    peer = peer,
+                    onClick = { onSelectPeer(peer) },
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .offset(x = offsetX, y = offsetY)
+                        .zIndex(6f)
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun PeerAccountBubble(
-    peer: CuteAvatar,
+private fun RealPeerAccountBubble(
+    peer: DiscoveredDevice,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = ripple(bounded = false, radius = 32.dp),
+                indication = ripple(bounded = false, radius = 36.dp),
                 onClick = onClick
             )
-            .padding(4.dp)
+            .padding(6.dp)
             .testTag("peer_account_${peer.id}")
     ) {
-        // Cute 3D Cartoon Avatar Bubble
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(54.dp)
-                .shadow(elevation = 12.dp, shape = CircleShape, spotColor = peer.glowColor)
+                .size(62.dp)
+                .shadow(elevation = 16.dp, shape = CircleShape, spotColor = Color(0xFF00E5FF))
                 .clip(CircleShape)
                 .background(Color(0xFF0F172A))
-                .border(2.5.dp, peer.glowColor, CircleShape)
+                .border(2.5.dp, Color(0xFF00E5FF), CircleShape)
                 .padding(2.dp)
         ) {
             Image(
-                painter = painterResource(id = peer.drawableRes),
+                painter = painterResource(id = peer.avatarRes),
                 contentDescription = peer.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -364,22 +401,25 @@ private fun PeerAccountBubble(
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        // Cute Peer Name Label
         Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-            tonalElevation = 4.dp,
-            shadowElevation = 4.dp,
-            modifier = Modifier.border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+            tonalElevation = 6.dp,
+            shadowElevation = 6.dp,
+            modifier = Modifier.border(1.dp, Color(0xFF00E5FF).copy(alpha = 0.3f), RoundedCornerShape(10.dp))
         ) {
-            Text(
-                text = peer.name,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                maxLines = 1
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+            ) {
+                Text(
+                    text = peer.name,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+            }
         }
     }
 }
