@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.RestartAlt
@@ -101,7 +100,7 @@ fun CreateAccountScreen(
                 .widthIn(max = 520.dp)
                 .padding(horizontal = 24.dp, vertical = 12.dp)
         ) {
-            // Top Bar with Back icon and Reset button
+            // Top Bar
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -109,17 +108,26 @@ fun CreateAccountScreen(
                     .fillMaxWidth()
                     .padding(bottom = 8.dp)
             ) {
-                StyledIconBox(
-                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
-                    size = 42.dp,
-                    iconSize = 22.dp,
-                    backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
-                    iconTint = MaterialTheme.colorScheme.onSurface,
-                    shape = RoundedCornerShape(12.dp),
-                    onClick = onBackClick,
-                    modifier = Modifier.testTag("profile_back_button")
-                )
+                if (currentProfile.isCreated) {
+                    StyledIconBox(
+                        icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = "Back",
+                        size = 42.dp,
+                        iconSize = 22.dp,
+                        backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                        iconTint = MaterialTheme.colorScheme.onSurface,
+                        shape = RoundedCornerShape(12.dp),
+                        onClick = onBackClick,
+                        modifier = Modifier.testTag("profile_back_button")
+                    )
+                } else {
+                    Text(
+                        text = "Welcome to Cute Share",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
 
                 // Reset Button
                 OutlinedButton(
@@ -222,7 +230,7 @@ fun CreateAccountScreen(
                     .testTag("user_name_input")
             )
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Section label for Cute Photos Grid
             Row(
@@ -257,12 +265,12 @@ fun CreateAccountScreen(
                     .testTag("cute_photos_grid")
             ) {
                 items(CartoonAvatars.list) { avatar ->
-                    val isSelected = avatar.id - 1 == selectedAvatarIndex
+                    val isSelected = avatar.drawableRes == currentAvatar.drawableRes
 
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(62.dp)
+                            .size(60.dp)
                             .clip(CircleShape)
                             .background(
                                 if (isSelected) avatar.glowColor.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant
@@ -272,7 +280,9 @@ fun CreateAccountScreen(
                                 color = if (isSelected) avatar.glowColor else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
                                 shape = CircleShape
                             )
-                            .clickable { selectedAvatarIndex = avatar.id - 1 }
+                            .clickable {
+                                selectedAvatarIndex = CartoonAvatars.list.indexOf(avatar)
+                            }
                             .padding(3.dp)
                             .testTag("avatar_option_${avatar.id}")
                     ) {
@@ -308,7 +318,7 @@ fun CreateAccountScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Save Profile Button
+            // Save / Get Started Button
             Button(
                 onClick = {
                     val finalName = userName.trim().ifEmpty { "Cute Explorer" }
@@ -325,7 +335,7 @@ fun CreateAccountScreen(
                     .testTag("save_profile_button")
             ) {
                 Text(
-                    text = "Save Profile",
+                    text = if (currentProfile.isCreated) "Save Profile" else "Start Sharing",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )

@@ -34,18 +34,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -54,16 +54,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.SampleDataProvider
+import com.example.data.DeviceFileScanner
 import com.example.model.FileCategory
 import com.example.model.SharedFile
 import com.example.model.formatBytes
@@ -80,8 +79,16 @@ fun FilePickerScreen(
 ) {
     val context = LocalContext.current
     var selectedCategory by remember { mutableStateOf(FileCategory.IMAGE) }
-    val allFiles = remember { mutableStateListOf<SharedFile>().apply { addAll(SampleDataProvider.sampleFiles) } }
+    val allFiles = remember { mutableStateListOf<SharedFile>() }
     val selectedFileIds = remember { mutableStateListOf<String>() }
+    var isLoadingDeviceFiles by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        val scanned = DeviceFileScanner.queryDeviceFiles(context)
+        allFiles.clear()
+        allFiles.addAll(scanned)
+        isLoadingDeviceFiles = false
+    }
 
     // Real device file picker launcher
     val openDocumentLauncher = rememberLauncherForActivityResult(
@@ -106,7 +113,7 @@ fun FilePickerScreen(
 
                 val ext = displayName.substringAfterLast('.', "").uppercase()
                 val detectedCat = when (ext) {
-                    "JPG", "JPEG", "PNG", "WEBP", "GIF" -> FileCategory.IMAGE
+                    "JPG", "JPEG", "PNG", "WEBP", "GIF", "HEIC" -> FileCategory.IMAGE
                     "MP4", "MKV", "MOV", "AVI" -> FileCategory.VIDEO
                     "MP3", "FLAC", "WAV", "M4A" -> FileCategory.AUDIO
                     "APK" -> FileCategory.APP
@@ -217,7 +224,7 @@ fun FilePickerScreen(
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Browse Device",
+                        text = "Browse Storage",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface
@@ -247,59 +254,119 @@ fun FilePickerScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            val categoryIds = filteredFiles.map { it.id }
-                            if (selectedFileIds.containsAll(categoryIds)) {
-                                selectedFileIds.removeAll(categoryIds)
-                            } else {
-                                categoryIds.forEach { id ->
-                                    if (!selectedFileIds.contains(id)) selectedFileIds.add(id)
+                if (filteredFiles.isNotEmpty()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                val categoryIds = filteredFiles.map { it.id }
+                                if (selectedFileIds.containsAll(categoryIds)) {
+                                    selectedFileIds.removeAll(categoryIds)
+                                } else {
+                                    categoryIds.forEach { id ->
+                                        if (!selectedFileIds.contains(id)) selectedFileIds.add(id)
+                                    }
                                 }
                             }
-                        }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    val allCategorySelected = filteredFiles.isNotEmpty() && selectedFileIds.containsAll(filteredFiles.map { it.id })
-                    Icon(
-                        imageVector = if (allCategorySelected) Icons.Rounded.DoneAll else Icons.Rounded.Check,
-                        contentDescription = "Select all",
-                        tint = if (allCategorySelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (allCategorySelected) "Deselect" else "Select All",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (allCategorySelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        val allCategorySelected = filteredFiles.isNotEmpty() && selectedFileIds.containsAll(filteredFiles.map { it.id })
+                        Icon(
+                            imageVector = if (allCategorySelected) Icons.Rounded.DoneAll else Icons.Rounded.Check,
+                            contentDescription = "Select all",
+                            tint = if (allCategorySelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (allCategorySelected) "Deselect" else "Select All",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (allCategorySelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
-            // File items list
-            LazyColumn(
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 100.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(filteredFiles, key = { it.id }) { file ->
-                    val isSelected = selectedFileIds.contains(file.id)
-
-                    FileListItem(
-                        file = file,
-                        isSelected = isSelected,
-                        onToggle = {
-                            if (isSelected) {
-                                selectedFileIds.remove(file.id)
-                            } else {
-                                selectedFileIds.add(file.id)
-                            }
+            if (filteredFiles.isEmpty() && !isLoadingDeviceFiles) {
+                // Empty state for category with Browse Storage button
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(24.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clip(CircleShape)
+                                .background(selectedCategory.containerColor)
+                        ) {
+                            Icon(
+                                imageVector = selectedCategory.icon,
+                                contentDescription = null,
+                                tint = selectedCategory.contentColor,
+                                modifier = Modifier.size(36.dp)
+                            )
                         }
-                    )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No ${selectedCategory.title} Found",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Select files directly from your device storage or downloads.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                        OutlinedButton(
+                            onClick = { openDocumentLauncher.launch(arrayOf("*/*")) },
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.FolderOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Browse Any File")
+                        }
+                    }
+                }
+            } else {
+                // File items list
+                LazyColumn(
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 100.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(filteredFiles, key = { it.id }) { file ->
+                        val isSelected = selectedFileIds.contains(file.id)
+
+                        FileListItem(
+                            file = file,
+                            isSelected = isSelected,
+                            onToggle = {
+                                if (isSelected) {
+                                    selectedFileIds.remove(file.id)
+                                } else {
+                                    selectedFileIds.add(file.id)
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }

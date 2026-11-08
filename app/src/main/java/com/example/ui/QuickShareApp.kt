@@ -4,14 +4,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ui.components.PermissionsHandler
 import com.example.ui.navigation.Screen
 import com.example.ui.screens.CreateAccountScreen
 import com.example.ui.screens.FilePickerScreen
@@ -32,12 +31,18 @@ fun QuickShareApp(
     val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
     val pendingSharedFiles by viewModel.pendingSharedFiles.collectAsStateWithLifecycle()
     val isAddingMore by viewModel.isAddingMoreToActiveSession.collectAsStateWithLifecycle()
+    val showPermissionDialog by viewModel.showPermissionDialog.collectAsStateWithLifecycle()
 
-    BackHandler(enabled = currentScreen != Screen.HOME) {
+    BackHandler(enabled = currentScreen != Screen.HOME && userProfile.isCreated) {
         viewModel.onBack()
     }
 
-    // No bottom toolbar as requested! Clean edge-to-edge container
+    PermissionsHandler(
+        showDialog = showPermissionDialog,
+        onDismiss = { viewModel.dismissPermissionDialog() },
+        onPermissionsResult = { _ -> }
+    )
+
     Surface(
         modifier = modifier.fillMaxSize()
     ) {
@@ -51,8 +56,12 @@ fun QuickShareApp(
                         themeMode = themeMode,
                         onToggleTheme = { viewModel.toggleTheme() },
                         onOpenProfile = { viewModel.openProfile() },
-                        onShareClick = { viewModel.navigateTo(Screen.FILE_PICKER) },
-                        onReceiveClick = { viewModel.navigateTo(Screen.RECEIVE_RADAR) }
+                        onShareClick = {
+                            viewModel.navigateTo(Screen.FILE_PICKER)
+                        },
+                        onReceiveClick = {
+                            viewModel.navigateTo(Screen.RECEIVE_RADAR)
+                        }
                     )
 
                     Screen.ONBOARDING -> CreateAccountScreen(
@@ -72,7 +81,6 @@ fun QuickShareApp(
                         onBackClick = { viewModel.onBack() },
                         isAddingMore = isAddingMore,
                         onSendFiles = { files ->
-                            // Open peer selection or add to active session
                             viewModel.onFilesSelectedForSharing(files)
                         }
                     )
@@ -87,6 +95,7 @@ fun QuickShareApp(
                     )
 
                     Screen.RECEIVE_RADAR -> ReceiveRadarScreen(
+                        userProfile = userProfile,
                         onBackClick = { viewModel.onBack() },
                         onAcceptTransfer = { files, avatar ->
                             viewModel.startReceiveTransfer(files, avatar)

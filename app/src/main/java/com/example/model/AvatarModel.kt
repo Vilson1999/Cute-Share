@@ -7,7 +7,7 @@ import com.example.R
 data class CuteAvatar(
     val id: Int,
     val name: String,
-    @DrawableRes val drawableRes: Int,
+    @param:DrawableRes val drawableRes: Int,
     val glowColor: Color
 )
 
@@ -72,6 +72,78 @@ object CartoonAvatars {
             name = "Cozy Bear",
             drawableRes = R.drawable.avatar_10_bear,
             glowColor = Color(0xFFEC4899)
+        ),
+        CuteAvatar(
+            id = 11,
+            name = "Sunny Shiba",
+            drawableRes = R.drawable.avatar_11_shiba,
+            glowColor = Color(0xFFF59E0B)
+        ),
+        CuteAvatar(
+            id = 12,
+            name = "Brave Lion",
+            drawableRes = R.drawable.avatar_12_lion,
+            glowColor = Color(0xFFEF4444)
+        ),
+        CuteAvatar(
+            id = 13,
+            name = "Happy Otter",
+            drawableRes = R.drawable.avatar_13_otter,
+            glowColor = Color(0xFF14B8A6)
+        ),
+        CuteAvatar(
+            id = 14,
+            name = "Magic Duck",
+            drawableRes = R.drawable.avatar_14_duck,
+            glowColor = Color(0xFFEAB308)
+        ),
+        CuteAvatar(
+            id = 15,
+            name = "Lucky Frog",
+            drawableRes = R.drawable.avatar_15_frog,
+            glowColor = Color(0xFF22C55E)
+        ),
+        CuteAvatar(
+            id = 16,
+            name = "Forest Deer",
+            drawableRes = R.drawable.avatar_16_deer,
+            glowColor = Color(0xFFA855F7)
+        ),
+        CuteAvatar(
+            id = 17,
+            name = "Cheeky Monkey",
+            drawableRes = R.drawable.avatar_17_monkey,
+            glowColor = Color(0xFFF97316)
+        ),
+        CuteAvatar(
+            id = 18,
+            name = "Gentle Elephant",
+            drawableRes = R.drawable.avatar_18_elephant,
+            glowColor = Color(0xFF64748B)
+        ),
+        CuteAvatar(
+            id = 19,
+            name = "Rainbow Tiger",
+            drawableRes = R.drawable.avatar_19_tiger,
+            glowColor = Color(0xFFF43F5E)
+        ),
+        CuteAvatar(
+            id = 20,
+            name = "Cosmic Giraffe",
+            drawableRes = R.drawable.avatar_20_giraffe,
+            glowColor = Color(0xFFEA580C)
+        ),
+        CuteAvatar(
+            id = 21,
+            name = "Night Owl",
+            drawableRes = R.drawable.avatar_owl,
+            glowColor = Color(0xFF6366F1)
+        ),
+        CuteAvatar(
+            id = 22,
+            name = "Playful Puppy",
+            drawableRes = R.drawable.avatar_puppy,
+            glowColor = Color(0xFF3B82F6)
         )
     )
 

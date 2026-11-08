@@ -11,7 +11,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -27,14 +26,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -43,7 +40,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -64,31 +60,34 @@ import com.example.model.CartoonAvatars
 import com.example.model.CuteAvatar
 import com.example.model.FileCategory
 import com.example.model.SharedFile
+import com.example.model.UserProfile
 import com.example.ui.components.StyledIconBox
 import com.example.ui.components.WaveRadarEffect
 import kotlinx.coroutines.delay
+import java.util.UUID
 
 @Composable
 fun ReceiveRadarScreen(
+    userProfile: UserProfile,
     onBackClick: () -> Unit,
     onAcceptTransfer: (List<SharedFile>, CuteAvatar) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Current avatar index out of 10 cartoon avatars
-    var currentAvatarIndex by remember { mutableIntStateOf(0) }
-    val currentAvatar = CartoonAvatars.getAvatar(currentAvatarIndex)
-
-    var incomingTransferPrompt by remember { mutableStateOf(false) }
-    var senderAvatarIndex by remember { mutableIntStateOf(1) }
-
-    // Auto-discover incoming transfer simulation
-    LaunchedEffect(currentAvatarIndex) {
-        delay(2400)
-        senderAvatarIndex = (currentAvatarIndex + 1) % CartoonAvatars.list.size
-        incomingTransferPrompt = true
+    // Selected User Avatar & Glow color from current profile (not cosmic bunny)
+    val userAvatarGlow = remember(userProfile.avatarRes) {
+        CartoonAvatars.list.find { it.drawableRes == userProfile.avatarRes }?.glowColor ?: Color(0xFF00E5FF)
     }
 
-    val senderAvatar = CartoonAvatars.getAvatar(senderAvatarIndex)
+    var incomingTransferPrompt by remember { mutableStateOf(false) }
+    val senderAvatar = remember(userProfile.avatarRes) {
+        CartoonAvatars.list.firstOrNull { it.drawableRes != userProfile.avatarRes } ?: CartoonAvatars.list.first()
+    }
+
+    // Auto-discover incoming transfer simulation
+    LaunchedEffect(Unit) {
+        delay(2500)
+        incomingTransferPrompt = true
+    }
 
     val avatarScale by animateFloatAsState(
         targetValue = 1.0f,
@@ -106,10 +105,10 @@ fun ReceiveRadarScreen(
         val isWide = maxWidth > 600.dp
         val centerAvatarSize = if (isWide) 160.dp else 138.dp
 
-        // Continuous Wave Radar Effect surrounding the center cartoon avatar
+        // Continuous Wave Radar Effect surrounding the user's avatar
         WaveRadarEffect(
             modifier = Modifier.fillMaxSize(),
-            waveColor = currentAvatar.glowColor
+            waveColor = userAvatarGlow
         )
 
         // Top Header
@@ -137,12 +136,19 @@ fun ReceiveRadarScreen(
                     modifier = Modifier.testTag("receive_back_button")
                 )
 
+                Text(
+                    text = "Ready to Receive",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
                 // Balance placeholder space
                 Spacer(modifier = Modifier.size(44.dp))
             }
         }
 
-        // Center: Big Cute 3D Cartoon Icon with wave effect surrounding
+        // Center: User's Profile Photo & Name with wave effect surrounding
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
@@ -158,8 +164,8 @@ fun ReceiveRadarScreen(
                         width = 2.dp,
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                currentAvatar.glowColor.copy(alpha = 0.8f),
-                                currentAvatar.glowColor.copy(alpha = 0.2f)
+                                userAvatarGlow.copy(alpha = 0.8f),
+                                userAvatarGlow.copy(alpha = 0.2f)
                             )
                         ),
                         shape = CircleShape
@@ -174,20 +180,17 @@ fun ReceiveRadarScreen(
                         .shadow(
                             elevation = 28.dp,
                             shape = CircleShape,
-                            spotColor = currentAvatar.glowColor,
-                            ambientColor = currentAvatar.glowColor
+                            spotColor = userAvatarGlow,
+                            ambientColor = userAvatarGlow
                         )
                         .clip(CircleShape)
                         .background(Color(0xFF0F172A))
-                        .border(3.dp, currentAvatar.glowColor, CircleShape)
-                        .clickable {
-                            currentAvatarIndex = (currentAvatarIndex + 1) % CartoonAvatars.list.size
-                        }
+                        .border(3.dp, userAvatarGlow, CircleShape)
                         .testTag("center_cute_avatar")
                 ) {
                     Image(
-                        painter = painterResource(id = currentAvatar.drawableRes),
-                        contentDescription = currentAvatar.name,
+                        painter = painterResource(id = userProfile.avatarRes),
+                        contentDescription = userProfile.name,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -196,37 +199,44 @@ fun ReceiveRadarScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Minimalist device name pill
+            // User's Device / Display name pill
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(14.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
-                    .border(1.dp, currentAvatar.glowColor.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                    .border(1.dp, userAvatarGlow.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(20.dp)
+                        .size(22.dp)
                         .clip(CircleShape)
-                        .background(currentAvatar.glowColor.copy(alpha = 0.2f))
+                        .background(userAvatarGlow.copy(alpha = 0.2f))
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Smartphone,
                         contentDescription = "Device",
-                        tint = currentAvatar.glowColor,
-                        modifier = Modifier.size(12.dp)
+                        tint = userAvatarGlow,
+                        modifier = Modifier.size(14.dp)
                     )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = currentAvatar.name,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    text = userProfile.name,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Visible to nearby devices",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         // Incoming transfer alert card
@@ -246,7 +256,7 @@ fun ReceiveRadarScreen(
                 shadowElevation = 20.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 500.dp)
+                    .widthIn(max = 520.dp)
                     .border(1.5.dp, senderAvatar.glowColor.copy(alpha = 0.4f), RoundedCornerShape(24.dp))
             ) {
                 Row(
@@ -280,7 +290,7 @@ fun ReceiveRadarScreen(
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "3 files • 424 MB",
+                            text = "Incoming Transfer",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -317,22 +327,13 @@ fun ReceiveRadarScreen(
                             incomingTransferPrompt = false
                             val incomingFiles = listOf(
                                 SharedFile(
-                                    id = "in_1",
-                                    name = "Drone_Cinematic_4K_Reel.mp4",
-                                    sizeBytes = 432_013_312L,
-                                    formattedSize = "412 MB",
-                                    category = FileCategory.VIDEO,
-                                    extension = "MP4",
-                                    lastModified = "Incoming"
-                                ),
-                                SharedFile(
-                                    id = "in_2",
-                                    name = "Quarterly_Financial_Report.pdf",
-                                    sizeBytes = 13_002_342L,
-                                    formattedSize = "12.4 MB",
-                                    category = FileCategory.DOCUMENTS,
-                                    extension = "PDF",
-                                    lastModified = "Incoming"
+                                    id = UUID.randomUUID().toString(),
+                                    name = "Received_Package_${System.currentTimeMillis() % 1000}.bin",
+                                    sizeBytes = 25_000_000L,
+                                    formattedSize = "25 MB",
+                                    category = FileCategory.STORAGE,
+                                    extension = "BIN",
+                                    lastModified = "Just now"
                                 )
                             )
                             onAcceptTransfer(incomingFiles, senderAvatar)

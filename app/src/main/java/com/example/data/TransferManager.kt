@@ -30,39 +30,8 @@ class TransferManager(
     private var transferJob: Job? = null
 
     init {
-        // Initialize with a demo completed past transfer in history
-        val demoFiles = listOf(
-            TransferFileItem(
-                id = "h1",
-                name = "Tokyo_Neon_Ultra4K.png",
-                sizeBytes = 9_122_611L,
-                transferredBytes = 9_122_611L,
-                progress = 1f,
-                status = TransferStatus.COMPLETED,
-                category = FileCategory.IMAGE
-            ),
-            TransferFileItem(
-                id = "h2",
-                name = "Quarterly_Financial_Report.pdf",
-                sizeBytes = 13_002_342L,
-                transferredBytes = 13_002_342L,
-                progress = 1f,
-                status = TransferStatus.COMPLETED,
-                category = FileCategory.DOCUMENTS
-            )
-        )
-        _transferHistory.value = listOf(
-            TransferSession(
-                id = "hist_1",
-                isOutgoing = false,
-                peerName = "Galaxy Tab S9",
-                avatarRes = com.example.R.drawable.avatar_1_bunny,
-                files = demoFiles,
-                isCompleted = true,
-                currentSpeedBytesPerSec = 0L,
-                remainingSeconds = 0L
-            )
-        )
+        // Starts clean with no demo transfer history
+        _transferHistory.value = emptyList()
     }
 
     fun startTransfer(

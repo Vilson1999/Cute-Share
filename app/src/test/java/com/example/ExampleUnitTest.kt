@@ -20,10 +20,10 @@ class ExampleUnitTest {
 
     @Test
     fun testCartoonAvatarsList() {
-        assertEquals(10, CartoonAvatars.list.size)
+        assertEquals(22, CartoonAvatars.list.size)
         val first = CartoonAvatars.getAvatar(0)
         assertEquals("Cosmic Bunny", first.name)
-        val cycled = CartoonAvatars.getAvatar(10)
+        val cycled = CartoonAvatars.getAvatar(22)
         assertEquals(first.name, cycled.name)
     }
 

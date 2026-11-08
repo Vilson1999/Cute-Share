@@ -17,18 +17,18 @@ class MainViewModel : ViewModel() {
 
     private val transferManager = TransferManager(viewModelScope)
 
-    // User Profile with default avatar and name
+    // User Profile with default avatar and name; starts as not created to show profile creation on first start
     private val _userProfile = MutableStateFlow(
         UserProfile(
             name = "Cute Explorer",
             avatarRes = R.drawable.avatar_1_bunny,
-            isCreated = true
+            isCreated = false
         )
     )
     val userProfile: StateFlow<UserProfile> = _userProfile.asStateFlow()
 
-    // HOME is the default screen
-    private val _currentScreen = MutableStateFlow(Screen.HOME)
+    // ONBOARDING (Create Profile) is the first screen at first app start
+    private val _currentScreen = MutableStateFlow(Screen.ONBOARDING)
     val currentScreen: StateFlow<Screen> = _currentScreen.asStateFlow()
 
     private val _pendingSharedFiles = MutableStateFlow<List<SharedFile>>(emptyList())
@@ -40,6 +40,30 @@ class MainViewModel : ViewModel() {
     private val _themeMode = MutableStateFlow(com.example.ui.theme.ThemeMode.SYSTEM)
     val themeMode: StateFlow<com.example.ui.theme.ThemeMode> = _themeMode.asStateFlow()
 
+    private val _showPermissionDialog = MutableStateFlow(false)
+    val showPermissionDialog: StateFlow<Boolean> = _showPermissionDialog.asStateFlow()
+
+    fun triggerPermissionRequest() {
+        _showPermissionDialog.value = true
+    }
+
+    fun dismissPermissionDialog() {
+        _showPermissionDialog.value = false
+    }
+
+    fun initProfile(name: String, avatarRes: Int, isCreated: Boolean) {
+        _userProfile.value = UserProfile(
+            name = name.ifEmpty { "Cute Explorer" },
+            avatarRes = avatarRes,
+            isCreated = isCreated
+        )
+        if (isCreated) {
+            _currentScreen.value = Screen.HOME
+        } else {
+            _currentScreen.value = Screen.ONBOARDING
+        }
+    }
+
     fun saveUserProfile(name: String, avatarRes: Int) {
         _userProfile.value = UserProfile(
             name = name.ifEmpty { "Cute Explorer" },
@@ -47,6 +71,7 @@ class MainViewModel : ViewModel() {
             isCreated = true
         )
         _currentScreen.value = Screen.HOME
+        _showPermissionDialog.value = true
     }
 
     fun resetUserProfile() {
@@ -90,7 +115,12 @@ class MainViewModel : ViewModel() {
         }
         when (_currentScreen.value) {
             Screen.PEER_SELECTION -> _currentScreen.value = Screen.FILE_PICKER
-            Screen.FILE_PICKER, Screen.RECEIVE_RADAR, Screen.TRANSFER, Screen.ONBOARDING -> _currentScreen.value = Screen.HOME
+            Screen.FILE_PICKER, Screen.RECEIVE_RADAR, Screen.TRANSFER -> _currentScreen.value = Screen.HOME
+            Screen.ONBOARDING -> {
+                if (_userProfile.value.isCreated) {
+                    _currentScreen.value = Screen.HOME
+                }
+            }
             Screen.HOME -> Unit
         }
     }

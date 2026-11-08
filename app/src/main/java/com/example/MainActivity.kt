@@ -1,6 +1,7 @@
 package com.example
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -11,6 +12,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -28,10 +30,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Load persisted profile or show first-time profile creation
+        val prefs = getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
+        val isCreated = prefs.getBoolean("profile_created", false)
+        val name = prefs.getString("profile_name", "Cute Explorer") ?: "Cute Explorer"
+        val avatarRes = prefs.getInt("profile_avatar", R.drawable.avatar_1_bunny)
+        viewModel.initProfile(name = name, avatarRes = avatarRes, isCreated = isCreated)
+
         handleIntent(intent)
         enableEdgeToEdge()
         setContent {
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+            val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
             val isSystemDark = isSystemInDarkTheme()
             val isDark = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemDark
@@ -39,13 +50,22 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.DARK -> true
             }
 
+            // Persist profile when user saves it
+            LaunchedEffect(userProfile) {
+                if (userProfile.isCreated) {
+                    prefs.edit()
+                        .putBoolean("profile_created", true)
+                        .putString("profile_name", userProfile.name)
+                        .putInt("profile_avatar", userProfile.avatarRes)
+                        .apply()
+                }
+            }
+
             val view = LocalView.current
             if (!view.isInEditMode) {
                 val window = (LocalContext.current as Activity).window
                 DisposableEffect(isDark) {
                     val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-                    // When in light theme, status bar icons must be dark so they are visible
-                    // When in dark theme, status bar icons must be light so they are visible
                     insetsController.isAppearanceLightStatusBars = !isDark
                     insetsController.isAppearanceLightNavigationBars = !isDark
                     onDispose {}
