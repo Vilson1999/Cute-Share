@@ -21,11 +21,11 @@ import java.util.UUID
 object DeviceFileScanner {
 
     /**
-     * Comprehensive scanner that queries both Internal and External Storage for files:
-     * - MediaStore files across external & internal volumes (Images, Videos, Audio, Documents, Archives, Downloads)
-     * - Direct file system scanning of external storage (Downloads, Documents, DCIM, Pictures, Music, CuteShare, etc.)
+     * Comprehensive scanner that queries both Internal Storage and Removable SD Card Storage:
+     * - MediaStore across ALL external volumes (primary storage + external SD cards) via MediaStore.getExternalVolumeNames
+     * - Direct file system scanning of external storage & physical SD card mounts (/storage/XXXX-XXXX)
      * - Direct file system scanning of internal storage (filesDir, cacheDir, app storage)
-     * - Installed applications (as APKs) and APK Apps found in storage
+     * - Installed applications (as APKs) and APK Apps found in storage & SD card
      */
     suspend fun queryDeviceFiles(context: Context): List<SharedFile> = withContext(Dispatchers.IO) {
         val fileList = mutableListOf<SharedFile>()
@@ -81,7 +81,7 @@ object DeviceFileScanner {
             )
         }
 
-        fun queryUri(collectionUri: Uri, defaultCategory: FileCategory, maxCount: Int = 120) {
+        fun queryUri(collectionUri: Uri, defaultCategory: FileCategory, maxCount: Int = 150) {
             val projection = arrayOf(
                 MediaStore.MediaColumns._ID,
                 MediaStore.MediaColumns.DISPLAY_NAME,
@@ -130,31 +130,38 @@ object DeviceFileScanner {
         }
 
         // =========================================================================
-        // 1. QUERY MEDIASTORE: EXTERNAL & INTERNAL STORAGE VOLUMES
+        // 1. QUERY MEDIASTORE: ALL EXTERNAL VOLUMES (INTERNAL + REMOVABLE SD CARDS)
         // =========================================================================
-        // External storage MediaStore files
-        queryUri(MediaStore.Files.getContentUri("external"), FileCategory.STORAGE, maxCount = 200)
-        queryUri(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, FileCategory.IMAGE, maxCount = 150)
-        queryUri(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, FileCategory.VIDEO, maxCount = 150)
-        queryUri(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, FileCategory.AUDIO, maxCount = 150)
+        val volumeNames = mutableSetOf<String>()
+        volumeNames.add("external")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                volumeNames.addAll(MediaStore.getExternalVolumeNames(context))
+            } catch (_: Exception) {}
+        }
 
-        // Internal storage MediaStore files
+        for (vol in volumeNames) {
+            try {
+                queryUri(MediaStore.Images.Media.getContentUri(vol), FileCategory.IMAGE, maxCount = 150)
+                queryUri(MediaStore.Video.Media.getContentUri(vol), FileCategory.VIDEO, maxCount = 150)
+                queryUri(MediaStore.Audio.Media.getContentUri(vol), FileCategory.AUDIO, maxCount = 150)
+                queryUri(MediaStore.Files.getContentUri(vol), FileCategory.STORAGE, maxCount = 200)
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        queryUri(MediaStore.Downloads.getContentUri(vol), FileCategory.STORAGE, maxCount = 150)
+                    } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {}
+        }
+
+        // Internal system volume MediaStore query
         try {
-            queryUri(MediaStore.Files.getContentUri("internal"), FileCategory.STORAGE, maxCount = 100)
+            queryUri(MediaStore.Files.getContentUri("internal"), FileCategory.STORAGE, maxCount = 80)
             queryUri(MediaStore.Images.Media.INTERNAL_CONTENT_URI, FileCategory.IMAGE, maxCount = 50)
             queryUri(MediaStore.Video.Media.INTERNAL_CONTENT_URI, FileCategory.VIDEO, maxCount = 50)
             queryUri(MediaStore.Audio.Media.INTERNAL_CONTENT_URI, FileCategory.AUDIO, maxCount = 50)
         } catch (_: Exception) {}
-
-        // Download collections on Android Q+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                queryUri(MediaStore.Downloads.EXTERNAL_CONTENT_URI, FileCategory.STORAGE, maxCount = 150)
-            } catch (_: Exception) {}
-            try {
-                queryUri(MediaStore.Downloads.INTERNAL_CONTENT_URI, FileCategory.STORAGE, maxCount = 80)
-            } catch (_: Exception) {}
-        }
 
         // =========================================================================
         // 2. QUERY INSTALLED APPLICATIONS (APKs)
@@ -199,9 +206,9 @@ object DeviceFileScanner {
         } catch (_: Exception) {}
 
         // =========================================================================
-        // 3. DIRECT FILE SYSTEM SCANNING: EXTERNAL & INTERNAL STORAGE
+        // 3. DIRECT FILE SYSTEM SCANNING: DISCOVER SD CARDS AND STORAGE ROOTS
         // =========================================================================
-        fun scanDirectory(dir: File?, maxDepth: Int = 2, isInternal: Boolean = false) {
+        fun scanDirectory(dir: File?, maxDepth: Int = 2, isSdCard: Boolean = false, isInternal: Boolean = false) {
             if (dir == null || !dir.exists() || !dir.canRead()) return
 
             try {
@@ -218,12 +225,14 @@ object DeviceFileScanner {
                             continue
                         }
                         if (maxDepth > 0) {
-                            scanDirectory(file, maxDepth - 1, isInternal)
+                            scanDirectory(file, maxDepth - 1, isSdCard, isInternal)
                         }
                     } else if (file.isFile && file.length() > 0) {
                         val isApk = file.name.endsWith(".apk", ignoreCase = true)
                         val lastMod = if (file.lastModified() > 0) {
                             dateFormat.format(Date(file.lastModified()))
+                        } else if (isSdCard) {
+                            "SD Card"
                         } else if (isInternal) {
                             "Internal Storage"
                         } else {
@@ -235,7 +244,7 @@ object DeviceFileScanner {
                             size = file.length(),
                             formattedDate = lastMod,
                             uriString = Uri.fromFile(file).toString(),
-                            defaultCategory = if (isInternal) FileCategory.STORAGE else FileCategory.STORAGE,
+                            defaultCategory = FileCategory.STORAGE,
                             isApkApp = isApk
                         )
                     }
@@ -245,57 +254,95 @@ object DeviceFileScanner {
             }
         }
 
-        // Direct scan External Storage
+        // Collect all distinct storage roots: Primary Storage + Removable SD Cards
+        val storageRoots = mutableListOf<Pair<File, Boolean>>() // Pair of File and isSdCard
+
+        // Primary external storage
         try {
-            val extRoot = Environment.getExternalStorageDirectory()
-            val publicFolders = listOf(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
-                File(extRoot, "CuteShare"),
-                File(extRoot, "Download"),
-                File(extRoot, "Documents"),
-                File(extRoot, "Bluetooth")
+            val primaryRoot = Environment.getExternalStorageDirectory()
+            if (primaryRoot != null && primaryRoot.exists() && primaryRoot.canRead()) {
+                storageRoots.add(Pair(primaryRoot, false))
+            }
+        } catch (_: Exception) {}
+
+        // Removable SD cards in /storage/
+        try {
+            val storageParent = File("/storage")
+            if (storageParent.exists() && storageParent.canRead()) {
+                storageParent.listFiles()?.forEach { candidate ->
+                    if (candidate.isDirectory && candidate.canRead() &&
+                        !candidate.name.equals("emulated", ignoreCase = true) &&
+                        !candidate.name.equals("self", ignoreCase = true) &&
+                        !candidate.name.equals("knox", ignoreCase = true)
+                    ) {
+                        if (storageRoots.none { it.first.absolutePath == candidate.absolutePath }) {
+                            storageRoots.add(Pair(candidate, true))
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Fallback SD card discovery through getExternalFilesDirs
+        try {
+            val extDirs = context.getExternalFilesDirs(null)
+            for (fDir in extDirs) {
+                if (fDir != null) {
+                    var curr: File? = fDir
+                    while (curr != null && curr.parentFile != null && curr.parentFile?.name != "storage") {
+                        curr = curr.parentFile
+                    }
+                    if (curr != null && curr.exists() && curr.canRead()) {
+                        if (storageRoots.none { it.first.absolutePath == curr?.absolutePath }) {
+                            val isSd = !curr.name.equals("emulated", ignoreCase = true) && !curr.name.equals("self", ignoreCase = true)
+                            storageRoots.add(Pair(curr, isSd))
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Scan all discovered storage roots (Primary and SD Cards)
+        for ((root, isSdCard) in storageRoots) {
+            val subFolders = listOf(
+                File(root, "Download"),
+                File(root, "Downloads"),
+                File(root, "DCIM"),
+                File(root, "Pictures"),
+                File(root, "Music"),
+                File(root, "Movies"),
+                File(root, "Documents"),
+                File(root, "CuteShare"),
+                File(root, "Bluetooth")
             )
 
-            for (folder in publicFolders) {
-                scanDirectory(folder, maxDepth = 2, isInternal = false)
+            for (folder in subFolders) {
+                scanDirectory(folder, maxDepth = 2, isSdCard = isSdCard, isInternal = false)
             }
 
-            // Also scan immediate root files of external storage
-            extRoot?.listFiles { f -> f.isFile && !f.isHidden }?.forEach { f ->
-                if (f.length() > 0) {
-                    val isApk = f.name.endsWith(".apk", ignoreCase = true)
-                    addFileSafely(
-                        name = f.name,
-                        size = f.length(),
-                        formattedDate = dateFormat.format(Date(f.lastModified())),
-                        uriString = Uri.fromFile(f).toString(),
-                        defaultCategory = FileCategory.STORAGE,
-                        isApkApp = isApk
-                    )
+            // Also scan immediate root files of storage / SD card
+            try {
+                root.listFiles { f -> f.isFile && !f.isHidden }?.forEach { f ->
+                    if (f.length() > 0) {
+                        val isApk = f.name.endsWith(".apk", ignoreCase = true)
+                        addFileSafely(
+                            name = f.name,
+                            size = f.length(),
+                            formattedDate = if (f.lastModified() > 0) dateFormat.format(Date(f.lastModified())) else if (isSdCard) "SD Card" else "External Storage",
+                            uriString = Uri.fromFile(f).toString(),
+                            defaultCategory = FileCategory.STORAGE,
+                            isApkApp = isApk
+                        )
+                    }
                 }
-            }
-        } catch (_: Exception) {}
+            } catch (_: Exception) {}
+        }
 
-        // Direct scan Removable SD Cards / External Volumes
+        // Direct scan Internal App Storage
         try {
-            val extFilesDirs = context.getExternalFilesDirs(null)
-            for (fDir in extFilesDirs) {
-                if (fDir != null) {
-                    scanDirectory(fDir, maxDepth = 2, isInternal = false)
-                }
-            }
-        } catch (_: Exception) {}
-
-        // Direct scan Internal Storage
-        try {
-            scanDirectory(context.filesDir, maxDepth = 3, isInternal = true)
-            scanDirectory(context.cacheDir, maxDepth = 2, isInternal = true)
-            scanDirectory(context.getExternalFilesDir(null), maxDepth = 3, isInternal = true)
+            scanDirectory(context.filesDir, maxDepth = 3, isSdCard = false, isInternal = true)
+            scanDirectory(context.cacheDir, maxDepth = 2, isSdCard = false, isInternal = true)
+            scanDirectory(context.getExternalFilesDir(null), maxDepth = 3, isSdCard = false, isInternal = true)
         } catch (_: Exception) {}
 
         fileList

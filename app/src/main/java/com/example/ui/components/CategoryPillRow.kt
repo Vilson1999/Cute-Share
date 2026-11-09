@@ -49,9 +49,7 @@ fun CategoryPillRow(
             FileCategory.IMAGE,
             FileCategory.VIDEO,
             FileCategory.AUDIO,
-            FileCategory.APP,
-            FileCategory.DOCUMENTS,
-            FileCategory.STORAGE
+            FileCategory.APP
         )
         activeCategories.forEach { category ->
             val isSelected = category == selectedCategory
