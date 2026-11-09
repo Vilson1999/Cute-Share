@@ -96,4 +96,15 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onStop() {
+        super.onStop()
+        // If not actively transferring files, shut down all sockets and discovery
+        viewModel.onAppBackgrounded()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        viewModel.cleanupAllBackgroundWork()
+    }
 }

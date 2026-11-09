@@ -4,14 +4,22 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.HardwareReadinessManager
+import com.example.ui.components.HardwareReadinessDialog
 import com.example.ui.components.PermissionsHandler
 import com.example.ui.navigation.Screen
 import com.example.ui.screens.CreateAccountScreen
@@ -30,6 +38,8 @@ fun QuickShareApp(
     LaunchedEffect(context) {
         viewModel.attachContext(context)
     }
+
+    var pendingHardwareSetupTarget by remember { mutableStateOf<Screen?>(null) }
 
     val currentScreen by viewModel.currentScreen.collectAsStateWithLifecycle()
     val currentSession by viewModel.currentSession.collectAsStateWithLifecycle()
@@ -52,13 +62,33 @@ fun QuickShareApp(
         onPermissionsResult = { _ -> viewModel.onPermissionsHandled() }
     )
 
+    if (pendingHardwareSetupTarget != null) {
+        val target = pendingHardwareSetupTarget!!
+        HardwareReadinessDialog(
+            actionName = if (target == Screen.FILE_PICKER) "Sharing" else "Receiving",
+            onAllReady = {
+                pendingHardwareSetupTarget = null
+                viewModel.navigateTo(target)
+            },
+            onDismiss = {
+                pendingHardwareSetupTarget = null
+            }
+        )
+    }
+
     Surface(
         modifier = modifier.fillMaxSize()
     ) {
         Box(
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.TopCenter
         ) {
-            Crossfade(targetState = currentScreen, label = "screen_transition") { screen ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 720.dp)
+            ) {
+                Crossfade(targetState = currentScreen, label = "screen_transition") { screen ->
                 when (screen) {
                     Screen.HOME -> HomeScreen(
                         userProfile = userProfile,
@@ -66,10 +96,18 @@ fun QuickShareApp(
                         onToggleTheme = { viewModel.toggleTheme() },
                         onOpenProfile = { viewModel.openProfile() },
                         onShareClick = {
-                            viewModel.navigateTo(Screen.FILE_PICKER)
+                            if (HardwareReadinessManager.isAllHardwareReady(context)) {
+                                viewModel.navigateTo(Screen.FILE_PICKER)
+                            } else {
+                                pendingHardwareSetupTarget = Screen.FILE_PICKER
+                            }
                         },
                         onReceiveClick = {
-                            viewModel.navigateTo(Screen.RECEIVE_RADAR)
+                            if (HardwareReadinessManager.isAllHardwareReady(context)) {
+                                viewModel.navigateTo(Screen.RECEIVE_RADAR)
+                            } else {
+                                pendingHardwareSetupTarget = Screen.RECEIVE_RADAR
+                            }
                         }
                     )
 
@@ -126,4 +164,5 @@ fun QuickShareApp(
             }
         }
     }
+}
 }

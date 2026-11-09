@@ -366,4 +366,25 @@ class MainViewModel : ViewModel() {
         localTransferManager.cancelFile(fileId)
         p2pTransferManager?.cancelFile(fileId)
     }
+
+    fun isTransferActive(): Boolean {
+        val p2pActive = p2pTransferManager?.isTransferActive() == true
+        val localActive = localTransferManager.currentSession.value?.let { !it.isCompleted && !it.isCancelled } == true
+        return p2pActive || localActive
+    }
+
+    fun onAppBackgrounded() {
+        if (!isTransferActive()) {
+            p2pTransferManager?.shutdownIdleBackgroundWork()
+        }
+    }
+
+    fun cleanupAllBackgroundWork() {
+        p2pTransferManager?.shutdownAll()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        cleanupAllBackgroundWork()
+    }
 }

@@ -131,7 +131,9 @@ object DeviceFileScanner {
                             category = FileCategory.APP,
                             extension = "APK",
                             lastModified = "Installed App",
-                            uriString = Uri.fromFile(apkFile).toString()
+                            uriString = Uri.fromFile(apkFile).toString(),
+                            packageName = pkgName,
+                            isDownloadedApk = false
                         )
                     )
                 } catch (_: Exception) {}
@@ -153,7 +155,9 @@ object DeviceFileScanner {
                             category = FileCategory.APP,
                             extension = "APK",
                             lastModified = "Downloaded APK",
-                            uriString = Uri.fromFile(apkFile).toString()
+                            uriString = Uri.fromFile(apkFile).toString(),
+                            packageName = null,
+                            isDownloadedApk = true
                         )
                     )
                 }

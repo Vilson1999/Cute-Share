@@ -43,26 +43,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Devices
-import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.NearMe
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Wifi
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -103,17 +96,15 @@ fun PeerSelectionScreen(
     modifier: Modifier = Modifier
 ) {
     val totalSize = remember(filesToShare) { filesToShare.sumOf { it.sizeBytes } }
-    var showManualIpDialog by remember { mutableStateOf(false) }
-    var manualIpInput by remember { mutableStateOf("") }
 
-    // Search flow animation radiating from around sharing user photo
+    // Lightweight search flow animation (optimized for 2GB RAM devices to avoid lag)
     val infiniteTransition = rememberInfiniteTransition(label = "search_flow")
 
     val wave1 by infiniteTransition.animateFloat(
         initialValue = 0.2f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2600, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "search_wave1"
@@ -123,30 +114,10 @@ fun PeerSelectionScreen(
         initialValue = 0.2f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2600, delayMillis = 650, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 2400, delayMillis = 1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "search_wave2"
-    )
-
-    val wave3 by infiniteTransition.animateFloat(
-        initialValue = 0.2f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2600, delayMillis = 1300, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "search_wave3"
-    )
-
-    val wave4 by infiniteTransition.animateFloat(
-        initialValue = 0.2f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2600, delayMillis = 1950, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "search_wave4"
     )
 
     val pulseUserScale by infiniteTransition.animateFloat(
@@ -186,40 +157,33 @@ fun PeerSelectionScreen(
             val center = Offset(size.width / 2f, size.height / 2f)
             val startRadius = 52.dp.toPx()
             val maxRadius = minOf(size.width, size.height) * 0.46f
-            val waves = listOf(wave1, wave2, wave3, wave4)
+            val waves = listOf(wave1, wave2)
 
             // Radiant glow disk directly around user photo
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        Color(0xFF00E5FF).copy(alpha = 0.22f),
-                        Color(0xFF10B981).copy(alpha = 0.08f),
+                        Color(0xFF00E5FF).copy(alpha = 0.20f),
+                        Color(0xFF10B981).copy(alpha = 0.06f),
                         Color.Transparent
                     ),
                     center = center,
-                    radius = startRadius * 1.6f
+                    radius = startRadius * 1.5f
                 ),
                 center = center,
-                radius = startRadius * 1.6f
+                radius = startRadius * 1.5f
             )
 
-            // Radiating search waves starting directly around the user photo
+            // Radiating search waves starting directly around user photo
             waves.forEach { progress ->
                 val radius = startRadius + (maxRadius - startRadius) * progress
-                val alpha = (1f - progress).coerceIn(0f, 1f) * 0.75f
+                val alpha = (1f - progress).coerceIn(0f, 1f) * 0.70f
 
                 drawCircle(
                     color = Color(0xFF00E5FF).copy(alpha = alpha),
                     radius = radius,
                     center = center,
-                    style = Stroke(width = 2.dp.toPx() * (1f - progress * 0.5f))
-                )
-
-                drawCircle(
-                    color = Color(0xFF10B981).copy(alpha = alpha * 0.3f),
-                    radius = radius * 0.95f,
-                    center = center,
-                    style = Stroke(width = 1.dp.toPx())
+                    style = Stroke(width = 2.dp.toPx() * (1f - progress * 0.4f))
                 )
             }
         }
@@ -278,38 +242,20 @@ fun PeerSelectionScreen(
                 )
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Manual IP Connect Button
-                StyledIconBox(
-                    icon = Icons.Rounded.Link,
-                    contentDescription = "Connect by IP",
-                    size = 44.dp,
-                    iconSize = 22.dp,
-                    backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
-                    iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    shape = RoundedCornerShape(12.dp),
-                    onClick = { showManualIpDialog = true },
-                    modifier = Modifier.testTag("manual_ip_connect_button")
-                )
-
-                // Rescan Nearby Devices Button
-                StyledIconBox(
-                    icon = Icons.Rounded.Refresh,
-                    contentDescription = "Scan nearby devices",
-                    size = 44.dp,
-                    iconSize = 22.dp,
-                    backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
-                    iconTint = Color(0xFF00E5FF),
-                    shape = RoundedCornerShape(12.dp),
-                    onClick = onRescan,
-                    modifier = Modifier
-                        .testTag("rescan_nearby_devices_button")
-                        .rotate(if (discoveredPeers.isEmpty()) scanRotation else 0f)
-                )
-            }
+            // Rescan Nearby Devices Button
+            StyledIconBox(
+                icon = Icons.Rounded.Refresh,
+                contentDescription = "Scan nearby devices",
+                size = 44.dp,
+                iconSize = 22.dp,
+                backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                iconTint = Color(0xFF00E5FF),
+                shape = RoundedCornerShape(12.dp),
+                onClick = onRescan,
+                modifier = Modifier
+                    .testTag("rescan_nearby_devices_button")
+                    .rotate(if (discoveredPeers.isEmpty()) scanRotation else 0f)
+            )
         }
 
         // USER NAME: MOVED UP 50% (37.5% UP OF CENTER) - NO IP SHOWN
@@ -548,7 +494,7 @@ fun PeerSelectionScreen(
                         Spacer(modifier = Modifier.height(6.dp))
 
                         Text(
-                            text = "Open Cute Share on the other phone and tap 'Receive'. Both devices must be on the same Wi-Fi or Hotspot.",
+                            text = "Open Cute Share on the receiver phone and tap Receive to connect via Wi-Fi Direct.",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -556,109 +502,25 @@ fun PeerSelectionScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Button(
+                            onClick = onRescan,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            ),
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)
                         ) {
-                            OutlinedButton(
-                                onClick = { showManualIpDialog = true },
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Link,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Connect by IP", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-
-                            Button(
-                                onClick = onRescan,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary
-                                ),
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Refresh,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Rescan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Rescan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
-        }
-
-        // Manual IP Connect Dialog (for Hotspot AP isolation or direct link)
-        if (showManualIpDialog) {
-            AlertDialog(
-                onDismissRequest = { showManualIpDialog = false },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF00E5FF).copy(alpha = 0.2f))
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Link,
-                                contentDescription = null,
-                                tint = Color(0xFF00E5FF),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text("Connect by IP Address", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    }
-                },
-                text = {
-                    Column {
-                        Text(
-                            text = "Enter receiver device IP address (e.g. 192.168.43.50):",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = manualIpInput,
-                            onValueChange = { manualIpInput = it.trim() },
-                            placeholder = { Text("192.168.1.xxx") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().testTag("manual_ip_input_field")
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            if (manualIpInput.isNotEmpty()) {
-                                onAddManualPeer(manualIpInput)
-                                showManualIpDialog = false
-                                manualIpInput = ""
-                            }
-                        },
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.testTag("manual_ip_submit_button")
-                    ) {
-                        Text("Connect")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showManualIpDialog = false }) {
-                        Text("Cancel")
-                    }
-                }
-            )
         }
     }
 }

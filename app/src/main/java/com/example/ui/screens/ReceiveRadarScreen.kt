@@ -217,7 +217,7 @@ fun ReceiveRadarScreen(
                 }
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (is5GhzSupported) "5 GHz Ultra-Speed Ready" else "2.4 GHz Ready",
+                    text = if (is5GhzSupported) "Wi-Fi Direct Active • 5 GHz Ready" else "Wi-Fi Direct Active • Direct P2P",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

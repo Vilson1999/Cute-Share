@@ -31,7 +31,7 @@ fun WaveRadarEffect(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3200, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 3000, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "wave1"
@@ -41,30 +41,10 @@ fun WaveRadarEffect(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3200, delayMillis = 800, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 3000, delayMillis = 1500, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "wave2"
-    )
-
-    val wave3 by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3200, delayMillis = 1600, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "wave3"
-    )
-
-    val wave4 by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3200, delayMillis = 2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "wave4"
     )
 
     Canvas(modifier = modifier.fillMaxSize()) {
@@ -76,14 +56,14 @@ fun WaveRadarEffect(
 
         if (maxRadius <= startRadius) return@Canvas
 
-        val waves = listOf(wave1, wave2, wave3, wave4)
+        val waves = listOf(wave1, wave2)
 
         // Soft ambient aura right around the profile photo perimeter
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    waveColor.copy(alpha = 0.28f),
-                    waveColor.copy(alpha = 0.12f),
+                    waveColor.copy(alpha = 0.25f),
+                    waveColor.copy(alpha = 0.08f),
                     Color.Transparent
                 ),
                 center = center,
@@ -93,35 +73,18 @@ fun WaveRadarEffect(
             radius = startRadius * 1.5f
         )
 
-        // Expanding waves radiating outward starting directly from around the user profile photo
+        // Expanding waves radiating outward smoothly starting directly around profile photo
         waves.forEach { progress ->
             val currentRadius = startRadius + (maxRadius - startRadius) * progress
-            val alpha = (1f - progress).coerceIn(0f, 1f) * 0.75f
+            val alpha = (1f - progress).coerceIn(0f, 1f) * 0.70f
 
-            // Faint ripple tint
-            drawCircle(
-                color = waveColor.copy(alpha = alpha * 0.12f),
-                radius = currentRadius,
-                center = center
-            )
-
-            // Primary wave ring line
+            // Primary crisp wave ring
             drawCircle(
                 color = waveColor.copy(alpha = alpha),
                 radius = currentRadius,
                 center = center,
-                style = Stroke(width = 2.dp.toPx() * (1f - progress * 0.45f))
+                style = Stroke(width = 2.dp.toPx() * (1f - progress * 0.4f))
             )
-
-            // Inner subtle concentric echo ring
-            if (progress > 0.08f) {
-                drawCircle(
-                    color = waveColor.copy(alpha = alpha * 0.35f),
-                    radius = currentRadius - 6.dp.toPx(),
-                    center = center,
-                    style = Stroke(width = 1.dp.toPx())
-                )
-            }
         }
     }
 }

@@ -1,16 +1,16 @@
 package com.example.data
 
 import java.net.Inet4Address
-import java.net.InetAddress
 import java.net.NetworkInterface
 
 object NetworkUtils {
 
-    const val DISCOVERY_PORT = 42889
-    const val DEFAULT_TRANSFER_PORT = 42888
+    const val WIFI_DIRECT_DEFAULT_PORT = 8888
+    const val WIFI_DIRECT_GROUP_OWNER_IP = "192.168.49.1"
 
     /**
-     * Resolves the primary local IPv4 address across active network interfaces (Wi-Fi, AP Hotspot, Ethernet, etc.)
+     * Resolves the primary local IPv4 address across active network interfaces (Wi-Fi Direct p2p, wlan, etc.)
+     * Prioritizes p2p interface for direct device-to-device transfers.
      */
     fun getLocalIpAddress(): String {
         try {
@@ -28,8 +28,8 @@ object NetworkUtils {
                         val host = addr.hostAddress ?: ""
                         if (host.isNotEmpty() && !host.startsWith("127.")) {
                             val name = iface.name.lowercase()
-                            // Prioritize wlan/ap/softap/rndis interfaces
-                            if (name.startsWith("wlan") || name.startsWith("ap") || name.startsWith("softap") || name.startsWith("rndis")) {
+                            // Prioritize Wi-Fi Direct p2p and wlan interfaces
+                            if (name.startsWith("p2p") || name.startsWith("wlan") || name.startsWith("ap")) {
                                 return host
                             }
                             candidates.add(host)
@@ -42,46 +42,5 @@ object NetworkUtils {
             }
         } catch (_: Exception) {}
         return "127.0.0.1"
-    }
-
-    /**
-     * Returns the /24 subnet prefix for scanning, e.g. "192.168.1."
-     */
-    fun getSubnetPrefix(ip: String = getLocalIpAddress()): String? {
-        if (ip.isEmpty() || ip.startsWith("127.")) return null
-        val parts = ip.split(".")
-        return if (parts.size == 4) {
-            "${parts[0]}.${parts[1]}.${parts[2]}."
-        } else null
-    }
-
-    /**
-     * Collects all possible subnet broadcast addresses plus 255.255.255.255 for reliable UDP multicast
-     */
-    fun getBroadcastAddresses(): List<InetAddress> {
-        val broadcastList = mutableListOf<InetAddress>()
-        try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces != null && interfaces.hasMoreElements()) {
-                val iface = interfaces.nextElement()
-                if (!iface.isUp || iface.isLoopback) continue
-
-                for (ifaceAddr in iface.interfaceAddresses) {
-                    val broadcast = ifaceAddr.broadcast
-                    if (broadcast != null && broadcast is Inet4Address && !broadcastList.contains(broadcast)) {
-                        broadcastList.add(broadcast)
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
-        try {
-            val universal = InetAddress.getByName("255.255.255.255")
-            if (!broadcastList.contains(universal)) {
-                broadcastList.add(universal)
-            }
-        } catch (_: Exception) {}
-
-        return broadcastList
     }
 }

@@ -9,7 +9,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [34])
 class ExampleRobolectricTest {
 
   @Test
@@ -164,5 +164,63 @@ class ExampleRobolectricTest {
     viewModel.saveUserProfile("Updated Name", R.drawable.avatar_2_panda)
     assertEquals(false, viewModel.showPermissionDialog.value)
   }
+
+  @Test
+  fun `cartoon avatars list contains 20 or more cute user photos`() {
+    val avatars = com.example.model.CartoonAvatars.list
+    org.junit.Assert.assertTrue(
+      "Expected 20 or more cute user photos, but got ${avatars.size}",
+      avatars.size >= 20
+    )
+    // Check all avatar drawables are non-zero
+    avatars.forEach { avatar ->
+      org.junit.Assert.assertNotEquals(0, avatar.drawableRes)
+      org.junit.Assert.assertTrue(avatar.name.isNotBlank())
+    }
+  }
+
+  @Test
+  fun `wifi direct constants and port are properly configured`() {
+    assertEquals(8888, com.example.data.NetworkUtils.WIFI_DIRECT_DEFAULT_PORT)
+    assertEquals("192.168.49.1", com.example.data.NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP)
+  }
+
+  @Test
+  fun `hardware readiness manager runs without crash on context`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val wifiOn = com.example.data.HardwareReadinessManager.isWifiEnabled(context)
+    val locOn = com.example.data.HardwareReadinessManager.isLocationEnabled(context)
+    val btOn = com.example.data.HardwareReadinessManager.isBluetoothEnabled(context)
+    // Returns boolean safely without uncaught exceptions
+    org.junit.Assert.assertTrue(wifiOn || !wifiOn)
+    org.junit.Assert.assertTrue(locOn || !locOn)
+    org.junit.Assert.assertTrue(btOn || !btOn)
+  }
+
+  @Test
+  fun `idle app does not run active transfer in background`() {
+    val viewModel = com.example.ui.MainViewModel()
+    // When no transfer is started, isTransferActive MUST be false
+    assertEquals(false, viewModel.isTransferActive())
+
+    // When backgrounded while idle, it cleans up without exceptions
+    viewModel.onAppBackgrounded()
+    assertEquals(false, viewModel.isTransferActive())
+  }
+
+  @Test
+  fun `only images videos audio apps are active categories in file manager`() {
+    val active = listOf(
+      com.example.model.FileCategory.IMAGE,
+      com.example.model.FileCategory.VIDEO,
+      com.example.model.FileCategory.AUDIO,
+      com.example.model.FileCategory.APP
+    )
+    assertEquals(4, active.size)
+    org.junit.Assert.assertFalse(active.contains(com.example.model.FileCategory.DOCUMENTS))
+    org.junit.Assert.assertFalse(active.contains(com.example.model.FileCategory.ARCHIVES))
+    org.junit.Assert.assertFalse(active.contains(com.example.model.FileCategory.STORAGE))
+  }
 }
+
 

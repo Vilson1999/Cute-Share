@@ -45,7 +45,13 @@ fun CategoryPillRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        FileCategory.values().forEach { category ->
+        val activeCategories = listOf(
+            FileCategory.IMAGE,
+            FileCategory.VIDEO,
+            FileCategory.AUDIO,
+            FileCategory.APP
+        )
+        activeCategories.forEach { category ->
             val isSelected = category == selectedCategory
 
             val pillBgColor by animateColorAsState(

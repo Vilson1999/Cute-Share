@@ -9,5 +9,7 @@ data class SharedFile(
     val extension: String,
     val lastModified: String,
     val uriString: String? = null,
-    val drawableResId: Int? = null
+    val drawableResId: Int? = null,
+    val packageName: String? = null,
+    val isDownloadedApk: Boolean = false
 )
