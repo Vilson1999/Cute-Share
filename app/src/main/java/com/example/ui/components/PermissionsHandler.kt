@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.NearMe
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -52,30 +53,34 @@ fun PermissionsHandler(
 ) {
     val context = LocalContext.current
     val permissionsToRequest = buildList {
-        // Storage & Media permissions
+        // 1. Storage & Media permissions
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.READ_MEDIA_IMAGES)
             add(Manifest.permission.READ_MEDIA_VIDEO)
             add(Manifest.permission.READ_MEDIA_AUDIO)
-            add(Manifest.permission.NEARBY_WIFI_DEVICES)
         } else {
             add(Manifest.permission.READ_EXTERNAL_STORAGE)
             add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
 
-        // Location for Wi-Fi hotspot & local device radar discovery
-        add(Manifest.permission.ACCESS_FINE_LOCATION)
-        add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        // 2. Nearby Devices permission (Android 13+ / API 33+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        }
 
-        // Bluetooth permissions
+        // 3. Bluetooth permissions
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             add(Manifest.permission.BLUETOOTH_SCAN)
-            add(Manifest.permission.BLUETOOTH_ADVERTISE)
             add(Manifest.permission.BLUETOOTH_CONNECT)
+            add(Manifest.permission.BLUETOOTH_ADVERTISE)
         } else {
             add(Manifest.permission.BLUETOOTH)
             add(Manifest.permission.BLUETOOTH_ADMIN)
         }
+
+        // 4. Location (Required by Android OS for Wi-Fi Direct and Hotspot P2P)
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
+        add(Manifest.permission.ACCESS_COARSE_LOCATION)
     }.toTypedArray()
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -133,15 +138,22 @@ fun PermissionsHandler(
                     PermissionItemRow(
                         icon = Icons.Rounded.Wifi,
                         iconColor = Color(0xFF10B981),
-                        title = "Wi-Fi & Local Network",
+                        title = "Wi-Fi Direct",
                         desc = "Direct high-speed wireless transfer up to 50 MB/s"
                     )
 
                     PermissionItemRow(
                         icon = Icons.Rounded.Bluetooth,
+                        iconColor = Color(0xFF3B82F6),
+                        title = "Bluetooth",
+                        desc = "Instantly discover and pair with nearby devices without internet"
+                    )
+
+                    PermissionItemRow(
+                        icon = Icons.Rounded.NearMe,
                         iconColor = Color(0xFFA855F7),
-                        title = "Bluetooth & Nearby",
-                        desc = "Instantly discover and pair with nearby devices"
+                        title = "Nearby Devices",
+                        desc = "Scan and connect directly to nearby phones"
                     )
 
                     PermissionItemRow(

@@ -239,21 +239,6 @@ fun RealTimeTransferMonitor(
                                     modifier = Modifier.size(10.dp)
                                 )
                             }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            // 5GHz / 2.4GHz Wi-Fi Band badge
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (session.wifiBand.startsWith("5")) Color(0xFF00E5FF).copy(alpha = 0.15f) else Color(0xFF10B981).copy(alpha = 0.15f))
-                                    .padding(horizontal = 5.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = session.wifiBand,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (session.wifiBand.startsWith("5")) Color(0xFF0284C7) else Color(0xFF059669)
-                                )
-                            }
                         }
 
                         Spacer(modifier = Modifier.height(2.dp))

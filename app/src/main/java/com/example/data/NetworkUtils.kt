@@ -43,4 +43,9 @@ object NetworkUtils {
         } catch (_: Exception) {}
         return "127.0.0.1"
     }
+
+    fun getSubnetPrefix(ip: String): String? {
+        val lastDot = ip.lastIndexOf('.')
+        return if (lastDot != -1) ip.substring(0, lastDot + 1) else null
+    }
 }

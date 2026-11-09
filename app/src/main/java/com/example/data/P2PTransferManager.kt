@@ -185,21 +185,29 @@ class P2PTransferManager(
                         requestP2pPeers()
                     }
                     override fun onFailure(reason: Int) {
-                        populateFallbackNearbyDirectPeers()
+                        // Wi-Fi Direct discovery not active or no physical peers
                     }
                 })
-            } catch (_: Exception) {
-                populateFallbackNearbyDirectPeers()
-            }
-        } else {
-            populateFallbackNearbyDirectPeers()
+            } catch (_: Exception) {}
         }
 
-        // Periodic polling for Wi-Fi Direct peers
+        // Periodic polling for real peers (Wi-Fi Direct and active Subnet ping)
         peerDiscoveryPollingJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 requestP2pPeers()
-                delay(2000L)
+                scanLocalSubnetForReceivers()
+
+                // Remove peers not seen in the last 20 seconds
+                val now = System.currentTimeMillis()
+                val expiredIds = discoveredDevicesMap.filter { (id, peer) ->
+                    !id.startsWith("manual_") && (now - peer.lastSeenTimestamp > 20000L)
+                }.keys
+                if (expiredIds.isNotEmpty()) {
+                    expiredIds.forEach { discoveredDevicesMap.remove(it) }
+                    _discoveredPeers.value = discoveredDevicesMap.values.toList()
+                }
+
+                delay(2500L)
             }
         }
     }
@@ -213,7 +221,7 @@ class P2PTransferManager(
                     val peers = peerList.deviceList
                     if (peers.isNotEmpty()) {
                         for (dev in peers) {
-                            val id = dev.deviceAddress ?: UUID.randomUUID().toString()
+                            val id = dev.deviceAddress ?: continue
                             val name = if (!dev.deviceName.isNullOrBlank()) dev.deviceName else "Direct Device"
                             val avatarIdx = (Math.abs(id.hashCode())) % CartoonAvatars.list.size
                             val avatar = CartoonAvatars.getAvatar(avatarIdx)
@@ -231,42 +239,65 @@ class P2PTransferManager(
                             discoveredDevicesMap[id] = directPeer
                         }
                         _discoveredPeers.value = discoveredDevicesMap.values.toList()
-                    } else if (discoveredDevicesMap.isEmpty()) {
-                        populateFallbackNearbyDirectPeers()
                     }
-                } else if (discoveredDevicesMap.isEmpty()) {
-                    populateFallbackNearbyDirectPeers()
                 }
             }
-        } catch (_: Exception) {
-            if (discoveredDevicesMap.isEmpty()) {
-                populateFallbackNearbyDirectPeers()
-            }
-        }
+        } catch (_: Exception) {}
     }
 
-    /**
-     * Supplies nearby Wi-Fi Direct direct-share avatars when testing on emulators or where
-     * zero physical peers are in range, ensuring seamless peer selection UI.
-     */
-    private fun populateFallbackNearbyDirectPeers() {
-        if (discoveredDevicesMap.isNotEmpty()) return
-        val demoAvatars = CartoonAvatars.list.take(12)
-        demoAvatars.forEachIndexed { idx, avatar ->
-            val devId = "p2p_direct_${idx + 1}"
-            val peer = DiscoveredDevice(
-                id = devId,
-                name = avatar.name,
-                avatarRes = avatar.drawableRes,
-                ip = NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP,
-                port = NetworkUtils.WIFI_DIRECT_DEFAULT_PORT,
-                supports5Ghz = true,
-                is5GhzActive = true,
-                lastSeenTimestamp = System.currentTimeMillis()
-            )
-            discoveredDevicesMap[devId] = peer
+    private suspend fun scanLocalSubnetForReceivers() = withContext(Dispatchers.IO) {
+        val myIp = NetworkUtils.getLocalIpAddress()
+        if (myIp == "127.0.0.1") return@withContext
+        val prefix = NetworkUtils.getSubnetPrefix(myIp) ?: return@withContext
+        val myHost = myIp.substringAfterLast('.', "0").toIntOrNull() ?: 0
+
+        // Ping nearest neighbor IP addresses
+        val candidateIps = mutableListOf<String>()
+        candidateIps.add("192.168.49.1")
+        candidateIps.add("192.168.43.1")
+        candidateIps.add("${prefix}1")
+        for (i in 1..8) {
+            val hUp = myHost + i
+            val hDown = myHost - i
+            if (hUp in 2..254) candidateIps.add("$prefix$hUp")
+            if (hDown in 2..254) candidateIps.add("$prefix$hDown")
         }
-        _discoveredPeers.value = discoveredDevicesMap.values.toList()
+
+        for (targetIp in candidateIps.distinct()) {
+            if (targetIp == myIp) continue
+            try {
+                Socket().use { s ->
+                    s.tcpNoDelay = true
+                    s.connect(InetSocketAddress(targetIp, NetworkUtils.WIFI_DIRECT_DEFAULT_PORT), 180)
+                    val out = BufferedOutputStream(s.getOutputStream())
+                    val inStream = BufferedInputStream(s.getInputStream())
+                    out.write("CUTESHARE_PING\n".toByteArray(Charsets.UTF_8))
+                    out.flush()
+                    val resp = readAsciiLine(inStream, maxLen = 256)
+                    if (resp.startsWith("CUTESHARE_PONG|")) {
+                        val parts = resp.split("|")
+                        if (parts.size >= 4) {
+                            val name = parts[1]
+                            val avatarRes = parts[2].toIntOrNull() ?: R.drawable.avatar_1_bunny
+                            val port = parts[3].toIntOrNull() ?: NetworkUtils.WIFI_DIRECT_DEFAULT_PORT
+                            val id = "lan_${targetIp.replace('.', '_')}"
+                            val peer = DiscoveredDevice(
+                                id = id,
+                                name = name,
+                                avatarRes = avatarRes,
+                                ip = targetIp,
+                                port = port,
+                                supports5Ghz = true,
+                                is5GhzActive = true,
+                                lastSeenTimestamp = System.currentTimeMillis()
+                            )
+                            discoveredDevicesMap[id] = peer
+                            _discoveredPeers.value = discoveredDevicesMap.values.toList()
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     fun stopDiscovery() {
@@ -374,6 +405,15 @@ class P2PTransferManager(
             val outStream = BufferedOutputStream(socket.getOutputStream(), 65536)
 
             val firstLine = readAsciiLine(inStream, maxLen = 256)
+            if (firstLine.startsWith("CUTESHARE_PING")) {
+                val ip = NetworkUtils.getLocalIpAddress()
+                val resp = "CUTESHARE_PONG|${userProfile.name}|${userProfile.avatarRes}|${NetworkUtils.WIFI_DIRECT_DEFAULT_PORT}|$ip\n"
+                outStream.write(resp.toByteArray(Charsets.UTF_8))
+                outStream.flush()
+                socket.close()
+                return@withContext
+            }
+
             if (!firstLine.startsWith("CUTESHARE_WIFIDIRECT_v1")) {
                 socket.close()
                 return@withContext

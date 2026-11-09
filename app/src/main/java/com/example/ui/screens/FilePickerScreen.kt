@@ -136,7 +136,7 @@ fun FilePickerScreen(
                     formattedSize = formatBytes(size),
                     category = detectedCat,
                     extension = ext.ifEmpty { "FILE" },
-                    lastModified = if (isApk) "Downloaded APK" else "Device Storage",
+                    lastModified = if (isApk) "Apk App" else "Device Storage",
                     uriString = uri.toString(),
                     isDownloadedApk = isApk
                 )
@@ -724,7 +724,7 @@ private fun AudioVideoListItem(
 
 /**
  * 3. App View: Exactly 5 columns with installed applications at top,
- * and downloaded APK files shown below using the APK icon as thumbnail.
+ * and Apk Apps shown below using the APK icon as thumbnail.
  */
 @Composable
 private fun AppGridSection(
@@ -776,7 +776,7 @@ private fun AppGridSection(
             )
         }
 
-        // Section 2: Downloaded APK Files
+        // Section 2: Apk Apps
         item(span = { GridItemSpan(5) }) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -792,7 +792,7 @@ private fun AppGridSection(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Downloaded APK Files (${downloadedApks.size})",
+                    text = "Apk Apps (${downloadedApks.size})",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -803,7 +803,7 @@ private fun AppGridSection(
         if (downloadedApks.isEmpty()) {
             item(span = { GridItemSpan(5) }) {
                 Text(
-                    text = "No downloaded .apk files found in Downloads",
+                    text = "No .apk apps found in storage",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 8.dp)

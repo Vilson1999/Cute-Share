@@ -74,16 +74,6 @@ fun ReceiveRadarScreen(
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    val is5GhzSupported = remember {
-        try {
-            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            wifi?.is5GHzBandSupported ?: true
-        } catch (_: Exception) {
-            true
-        }
-    }
-
     val userAvatarGlow = remember(userProfile.avatarRes) {
         CartoonAvatars.list.find { it.drawableRes == userProfile.avatarRes }?.glowColor ?: Color(0xFF00E5FF)
     }
@@ -187,40 +177,6 @@ fun ReceiveRadarScreen(
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Wi-Fi Band Indicator Badge (5 GHz / 2.4 GHz) - No IP shown
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
-                    .border(1.dp, userAvatarGlow.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(18.dp)
-                        .clip(CircleShape)
-                        .background(userAvatarGlow.copy(alpha = 0.2f))
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Wifi,
-                        contentDescription = null,
-                        tint = userAvatarGlow,
-                        modifier = Modifier.size(12.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = if (is5GhzSupported) "Wi-Fi Direct Active • 5 GHz Ready" else "Wi-Fi Direct Active • Direct P2P",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

@@ -60,14 +60,16 @@ fun HardwareReadinessDialog(
     var isWifiOn by remember { mutableStateOf(HardwareReadinessManager.isWifiEnabled(context)) }
     var isBluetoothOn by remember { mutableStateOf(HardwareReadinessManager.isBluetoothEnabled(context)) }
     var isLocationOn by remember { mutableStateOf(HardwareReadinessManager.isLocationEnabled(context)) }
-    var hasNearbyPerm by remember { mutableStateOf(HardwareReadinessManager.hasNearbyWifiPermission(context) && HardwareReadinessManager.hasBluetoothPermissions(context)) }
+    var hasNearbyWifiPerm by remember { mutableStateOf(HardwareReadinessManager.hasNearbyWifiPermission(context)) }
+    var hasBluetoothPerm by remember { mutableStateOf(HardwareReadinessManager.hasBluetoothPermissions(context)) }
     var hasLocPerm by remember { mutableStateOf(HardwareReadinessManager.hasLocationPermission(context)) }
 
     fun refreshStates() {
         isWifiOn = HardwareReadinessManager.isWifiEnabled(context)
         isBluetoothOn = HardwareReadinessManager.isBluetoothEnabled(context)
         isLocationOn = HardwareReadinessManager.isLocationEnabled(context)
-        hasNearbyPerm = HardwareReadinessManager.hasNearbyWifiPermission(context) && HardwareReadinessManager.hasBluetoothPermissions(context)
+        hasNearbyWifiPerm = HardwareReadinessManager.hasNearbyWifiPermission(context)
+        hasBluetoothPerm = HardwareReadinessManager.hasBluetoothPermissions(context)
         hasLocPerm = HardwareReadinessManager.hasLocationPermission(context)
     }
 
@@ -105,13 +107,18 @@ fun HardwareReadinessDialog(
         if (!hasLocPerm) {
             missingPermissions.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        if (!hasNearbyWifiPerm && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             missingPermissions.add(android.Manifest.permission.NEARBY_WIFI_DEVICES)
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            missingPermissions.add(android.Manifest.permission.BLUETOOTH_SCAN)
-            missingPermissions.add(android.Manifest.permission.BLUETOOTH_CONNECT)
-            missingPermissions.add(android.Manifest.permission.BLUETOOTH_ADVERTISE)
+        if (!hasBluetoothPerm) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                missingPermissions.add(android.Manifest.permission.BLUETOOTH_SCAN)
+                missingPermissions.add(android.Manifest.permission.BLUETOOTH_CONNECT)
+                missingPermissions.add(android.Manifest.permission.BLUETOOTH_ADVERTISE)
+            } else {
+                missingPermissions.add(android.Manifest.permission.BLUETOOTH)
+                missingPermissions.add(android.Manifest.permission.BLUETOOTH_ADMIN)
+            }
         }
         if (missingPermissions.isNotEmpty()) {
             permissionsLauncher.launch(missingPermissions.toTypedArray())
@@ -139,7 +146,7 @@ fun HardwareReadinessDialog(
         }
     }
 
-    val isCompletelyReady = isWifiOn && isBluetoothOn && isLocationOn && hasNearbyPerm && hasLocPerm
+    val isCompletelyReady = isWifiOn && isBluetoothOn && isLocationOn && hasNearbyWifiPerm && hasBluetoothPerm && hasLocPerm
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -203,25 +210,43 @@ fun HardwareReadinessDialog(
 
                 HardwareStatusItem(
                     title = "Bluetooth",
-                    subtitle = "Fast nearby peer advertising & pairing",
+                    subtitle = "Nearby peer advertising, pairing and transfer",
                     icon = Icons.Rounded.Bluetooth,
                     iconColor = Color(0xFF38BDF8),
-                    isReady = isBluetoothOn,
+                    isReady = isBluetoothOn && hasBluetoothPerm,
                     onEnable = {
-                        try {
-                            bluetoothLauncher.launch(HardwareReadinessManager.getEnableBluetoothIntent())
-                        } catch (_: Exception) {}
+                        if (!hasBluetoothPerm) {
+                            val perms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                                arrayOf(
+                                    android.Manifest.permission.BLUETOOTH_SCAN,
+                                    android.Manifest.permission.BLUETOOTH_CONNECT,
+                                    android.Manifest.permission.BLUETOOTH_ADVERTISE
+                                )
+                            } else {
+                                arrayOf(
+                                    android.Manifest.permission.BLUETOOTH,
+                                    android.Manifest.permission.BLUETOOTH_ADMIN
+                                )
+                            }
+                            permissionsLauncher.launch(perms)
+                        } else {
+                            try {
+                                bluetoothLauncher.launch(HardwareReadinessManager.getEnableBluetoothIntent())
+                            } catch (_: Exception) {}
+                        }
                     }
                 )
 
                 HardwareStatusItem(
-                    title = "Nearby Share / Devices",
-                    subtitle = "Scans for nearby Cute Share peers",
+                    title = "Nearby Devices",
+                    subtitle = "Required to scan and connect with nearby phones",
                     icon = Icons.Rounded.NearMe,
                     iconColor = Color(0xFFA855F7),
-                    isReady = hasNearbyPerm,
+                    isReady = hasNearbyWifiPerm,
                     onEnable = {
-                        autoEnableAll()
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                            permissionsLauncher.launch(arrayOf(android.Manifest.permission.NEARBY_WIFI_DEVICES))
+                        }
                     }
                 )
 
