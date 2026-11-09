@@ -285,18 +285,30 @@ private fun BigCircleShareButton(
                 )
                 .testTag("home_share_button")
         ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(iconSize + 22.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.22f))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.NearMe,
-                    contentDescription = "Share",
-                    tint = Color.White,
-                    modifier = Modifier.size(iconSize)
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(iconSize)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.22f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.NearMe,
+                        contentDescription = "Send",
+                        tint = Color.White,
+                        modifier = Modifier.size(iconSize * 0.62f)
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Send",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White
                 )
             }
         }
@@ -352,18 +364,30 @@ private fun BigCircleReceiveButton(
                 )
                 .testTag("home_receive_button")
         ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(iconSize + 22.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.22f))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.CallReceived,
-                    contentDescription = "Receive",
-                    tint = Color.White,
-                    modifier = Modifier.size(iconSize)
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(iconSize)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.22f))
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.CallReceived,
+                        contentDescription = "Receive",
+                        tint = Color.White,
+                        modifier = Modifier.size(iconSize * 0.62f)
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Receive",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White
                 )
             }
         }

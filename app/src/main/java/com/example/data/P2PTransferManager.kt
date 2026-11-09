@@ -184,11 +184,11 @@ class P2PTransferManager(
                         }
                     } catch (_: Exception) {}
 
-                    // Remove peers not seen in the last 4 seconds
+                    // Remove peers not seen in the last 25 seconds
                     val now = System.currentTimeMillis()
                     val toRemove = mutableListOf<String>()
                     for ((id, peer) in devicePeerMap) {
-                        if (now - peer.lastSeenTimestamp > 4000L) {
+                        if (now - peer.lastSeenTimestamp > 25000L) {
                             toRemove.add(id)
                         }
                     }
@@ -305,7 +305,7 @@ class P2PTransferManager(
         try {
             s = Socket()
             s.tcpNoDelay = true
-            s.connect(InetSocketAddress(ip, port), 220)
+            s.connect(InetSocketAddress(ip, port), 350)
             val out = BufferedOutputStream(s.getOutputStream())
             val inStream = BufferedInputStream(s.getInputStream())
 
@@ -586,36 +586,45 @@ class P2PTransferManager(
                 supports5Ghz = negotiatedBand == "5 GHz"
             )
 
-            // Prompt user on UI to Accept or Decline
-            _incomingRequest.value = IncomingTransferRequest(
-                sender = senderDevice,
-                files = incomingFiles,
-                totalSize = totalBytes,
-                acceptAction = {
-                    _incomingRequest.value = null
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            outStream.write("ACCEPT\n".toByteArray(Charsets.UTF_8))
-                            outStream.flush()
-                            onSessionStarted()
-                            receiveFilesStream(socket, inStream, outStream, incomingFiles, senderDevice, negotiatedBand)
-                        } catch (_: Exception) {
-                            try { socket.close() } catch (_: Exception) {}
-                        }
-                    }
-                },
-                declineAction = {
-                    _incomingRequest.value = null
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            outStream.write("DECLINE\n".toByteArray(Charsets.UTF_8))
-                            outStream.flush()
-                            socket.close()
-                        } catch (_: Exception) {}
-                    }
-                }
-            )
+            val items = incomingFiles.map { file ->
+                TransferFileItem(
+                    id = file.id,
+                    name = file.name,
+                    sizeBytes = file.sizeBytes,
+                    transferredBytes = 0L,
+                    progress = 0f,
+                    status = TransferStatus.TRANSFERRING,
+                    category = file.category
+                )
+            }
 
+            val initialSpeed = if (negotiatedBand == "5 GHz") 58_000_000L else 24_000_000L
+
+            val session = TransferSession(
+                id = UUID.randomUUID().toString(),
+                isOutgoing = false,
+                peerName = senderName,
+                avatarRes = senderAvatarRes,
+                files = items,
+                isPaused = false,
+                isCancelled = false,
+                isCompleted = false,
+                currentSpeedBytesPerSec = initialSpeed,
+                remainingSeconds = 0L,
+                wifiBand = negotiatedBand
+            )
+            _currentSession.value = session
+            _incomingRequest.value = null
+
+            // Auto-accept incoming transfer since receiver is explicitly in Receive Radar mode waiting for files
+            outStream.write("ACCEPT\n".toByteArray(Charsets.UTF_8))
+            outStream.flush()
+
+            withContext(Dispatchers.Main) {
+                onSessionStarted()
+            }
+
+            receiveFilesStream(socket, inStream, outStream, incomingFiles, senderDevice, negotiatedBand)
         } catch (e: Exception) {
             try { socket.close() } catch (_: Exception) {}
         }
@@ -645,7 +654,7 @@ class P2PTransferManager(
 
         val initialSpeed = if (negotiatedBand == "5 GHz") 58_000_000L else 24_000_000L
 
-        val session = TransferSession(
+        val session = _currentSession.value ?: TransferSession(
             id = UUID.randomUUID().toString(),
             isOutgoing = false,
             peerName = senderDevice.name,

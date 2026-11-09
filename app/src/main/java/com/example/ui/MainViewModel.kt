@@ -15,6 +15,7 @@ import com.example.model.TransferSession
 import com.example.model.UserProfile
 import com.example.ui.navigation.Screen
 import com.example.ui.theme.ThemeMode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -242,7 +243,9 @@ class MainViewModel : ViewModel() {
         p2pTransferManager?.startReceiver(
             userProfile = _userProfile.value,
             onSessionStarted = {
-                _currentScreen.value = Screen.TRANSFER
+                viewModelScope.launch(Dispatchers.Main) {
+                    _currentScreen.value = Screen.TRANSFER
+                }
             }
         )
     }
@@ -313,7 +316,9 @@ class MainViewModel : ViewModel() {
             avatarRes = peer.avatarRes
         )
 
-        _currentScreen.value = Screen.TRANSFER
+        viewModelScope.launch(Dispatchers.Main) {
+            _currentScreen.value = Screen.TRANSFER
+        }
     }
 
     // Backward-compatible for tests / avatars
