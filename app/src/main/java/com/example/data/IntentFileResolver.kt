@@ -15,10 +15,20 @@ object IntentFileResolver {
         val uris = mutableListOf<Uri>()
 
         if (intent.action == Intent.ACTION_SEND) {
-            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) ?: intent.data
+            val uri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java) ?: intent.data
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) ?: intent.data
+            }
             if (uri != null) uris.add(uri)
         } else if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
-            val list = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+            val list = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+            }
             if (list != null) uris.addAll(list)
         }
 

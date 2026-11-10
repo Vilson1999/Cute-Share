@@ -1,7 +1,6 @@
 package com.example.ui.components
 
 import android.content.Context
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -33,27 +32,126 @@ import com.example.model.SharedFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
+
+/**
+ * Dedicated 10 MB disk storage cache for image thumbnails.
+ * Stores exclusively low-quality, ultra-compact thumbnails (96x96, JPEG quality 40)
+ * to maximize speed, save battery, and fit thousands of thumbnails into the 10 MB quota.
+ */
+object ThumbnailDiskCache {
+    // Dedicated 10 MB disk storage allocation
+    const val MAX_DISK_STORAGE_BYTES = 10L * 1024L * 1024L
+    private const val PRUNE_HEADROOM_BYTES = 8L * 1024L * 1024L
+
+    // Low quality compression settings: 40% quality JPEG produces tiny 2-4 KB files
+    private const val LOW_QUALITY_JPEG_COMPRESSION = 40
+
+    private fun getStorageDir(context: Context): File {
+        return File(context.cacheDir, "image_thumbnails").apply {
+            if (!exists()) mkdirs()
+        }
+    }
+
+    private fun getStorageKey(key: String): String {
+        return "thumb_lq_" + Math.abs(key.hashCode()).toString() + ".jpg"
+    }
+
+    fun get(context: Context, key: String): Bitmap? {
+        return try {
+            val file = File(getStorageDir(context), getStorageKey(key))
+            if (file.exists() && file.length() > 0) {
+                file.setLastModified(System.currentTimeMillis())
+                val opts = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                }
+                BitmapFactory.decodeFile(file.absolutePath, opts)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun put(context: Context, key: String, bitmap: Bitmap) {
+        try {
+            val dir = getStorageDir(context)
+            val file = File(dir, getStorageKey(key))
+            FileOutputStream(file).use { out ->
+                // Low quality compression for maximum storage efficiency & fast loading
+                bitmap.compress(Bitmap.CompressFormat.JPEG, LOW_QUALITY_JPEG_COMPRESSION, out)
+            }
+            pruneToQuota(dir)
+        } catch (_: Exception) {}
+    }
+
+    private fun pruneToQuota(dir: File) {
+        try {
+            val files = dir.listFiles() ?: return
+            var totalBytes = files.sumOf { it.length() }
+            if (totalBytes > MAX_DISK_STORAGE_BYTES) {
+                val sortedOldestFirst = files.sortedBy { it.lastModified() }
+                for (file in sortedOldestFirst) {
+                    val len = file.length()
+                    if (file.delete()) {
+                        totalBytes -= len
+                    }
+                    if (totalBytes <= PRUNE_HEADROOM_BYTES) break
+                }
+            }
+        } catch (_: Exception) {}
+    }
+}
 
 object ThumbnailHelper {
-    private val thumbnailCache = LruCache<String, ImageBitmap>(120)
+    private val thumbnailMemCache = LruCache<String, ImageBitmap>(150)
+
+    // Target dimensions for low quality thumbnails (96x96 px)
+    private const val LOW_QUALITY_THUMB_SIZE = 96
+    private const val LOW_QUALITY_APP_ICON_SIZE = 72
 
     suspend fun loadImageThumbnail(context: Context, uriString: String?): ImageBitmap? = withContext(Dispatchers.IO) {
         if (uriString.isNullOrEmpty()) return@withContext null
-        val cached = thumbnailCache.get(uriString)
-        if (cached != null) return@withContext cached
 
+        // Level 1: Memory Cache
+        val memCached = thumbnailMemCache.get(uriString)
+        if (memCached != null) return@withContext memCached
+
+        // Level 2: 10 MB Low Quality Disk Cache
+        val diskBitmap = ThumbnailDiskCache.get(context, uriString)
+        if (diskBitmap != null) {
+            val imageBitmap = diskBitmap.asImageBitmap()
+            thumbnailMemCache.put(uriString, imageBitmap)
+            return@withContext imageBitmap
+        }
+
+        // Level 3: Decode low-quality sampled bitmap and persist to 10 MB disk cache
         try {
             val uri = Uri.parse(uriString)
             val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
-                    context.contentResolver.loadThumbnail(uri, android.util.Size(180, 180), null)
+                    context.contentResolver.loadThumbnail(uri, android.util.Size(LOW_QUALITY_THUMB_SIZE, LOW_QUALITY_THUMB_SIZE), null)
                 } catch (_: Exception) {
-                    decodeSampledBitmap(context, uri, 180, 180)
+                    decodeLowQualityBitmap(context, uri, LOW_QUALITY_THUMB_SIZE, LOW_QUALITY_THUMB_SIZE)
                 }
             } else {
-                decodeSampledBitmap(context, uri, 180, 180)
+                decodeLowQualityBitmap(context, uri, LOW_QUALITY_THUMB_SIZE, LOW_QUALITY_THUMB_SIZE)
             }
-            bitmap?.asImageBitmap()?.also { thumbnailCache.put(uriString, it) }
+
+            if (bitmap != null) {
+                // Scale down to low-quality thumbnail if larger than target size
+                val lowQualityBitmap = if (bitmap.width > LOW_QUALITY_THUMB_SIZE || bitmap.height > LOW_QUALITY_THUMB_SIZE) {
+                    Bitmap.createScaledBitmap(bitmap, LOW_QUALITY_THUMB_SIZE, LOW_QUALITY_THUMB_SIZE, false)
+                } else bitmap
+
+                ThumbnailDiskCache.put(context, uriString, lowQualityBitmap)
+                val imageBitmap = lowQualityBitmap.asImageBitmap()
+                thumbnailMemCache.put(uriString, imageBitmap)
+                imageBitmap
+            } else {
+                null
+            }
         } catch (_: Exception) {
             null
         }
@@ -61,8 +159,16 @@ object ThumbnailHelper {
 
     suspend fun loadAppIcon(context: Context, packageName: String?, uriString: String?): ImageBitmap? = withContext(Dispatchers.IO) {
         val key = packageName ?: uriString ?: return@withContext null
-        val cached = thumbnailCache.get(key)
-        if (cached != null) return@withContext cached
+
+        val memCached = thumbnailMemCache.get(key)
+        if (memCached != null) return@withContext memCached
+
+        val diskBitmap = ThumbnailDiskCache.get(context, key)
+        if (diskBitmap != null) {
+            val imageBitmap = diskBitmap.asImageBitmap()
+            thumbnailMemCache.put(key, imageBitmap)
+            return@withContext imageBitmap
+        }
 
         try {
             val pm = context.packageManager
@@ -89,24 +195,24 @@ object ThumbnailHelper {
                 }
             } else null
 
-            drawable?.let { drawableToBitmap(it) }?.asImageBitmap()?.also {
-                thumbnailCache.put(key, it)
+            drawable?.let { drawableToLowQualityBitmap(it, LOW_QUALITY_APP_ICON_SIZE, LOW_QUALITY_APP_ICON_SIZE) }?.let { bmp ->
+                ThumbnailDiskCache.put(context, key, bmp)
+                val imgBitmap = bmp.asImageBitmap()
+                thumbnailMemCache.put(key, imgBitmap)
+                imgBitmap
             }
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun drawableToBitmap(drawable: Drawable): Bitmap? {
+    private fun drawableToLowQualityBitmap(drawable: Drawable, width: Int, height: Int): Bitmap? {
         return try {
-            if (drawable is BitmapDrawable && drawable.bitmap != null) {
-                return drawable.bitmap
-            }
-            val w = drawable.intrinsicWidth.coerceAtLeast(1).coerceAtMost(144)
-            val h = drawable.intrinsicHeight.coerceAtLeast(1).coerceAtMost(144)
+            val w = width.coerceAtLeast(1)
+            val h = height.coerceAtLeast(1)
             val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
-            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.setBounds(0, 0, w, h)
             drawable.draw(canvas)
             bitmap
         } catch (_: Exception) {
@@ -114,7 +220,7 @@ object ThumbnailHelper {
         }
     }
 
-    private fun decodeSampledBitmap(context: Context, uri: Uri, reqWidth: Int, reqHeight: Int): Bitmap? {
+    private fun decodeLowQualityBitmap(context: Context, uri: Uri, reqWidth: Int, reqHeight: Int): Bitmap? {
         return try {
             val inputBounds = context.contentResolver.openInputStream(uri) ?: return null
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }

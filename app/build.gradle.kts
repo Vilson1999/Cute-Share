@@ -21,6 +21,8 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+    resourceConfigurations += listOf("en")
+
     ndk {
       val target = project.findProperty("targetAbi") as String?
       if (!target.isNullOrEmpty()) {
@@ -60,8 +62,8 @@ android {
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
+      isDebuggable = true
       isMinifyEnabled = true
-      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
@@ -77,6 +79,20 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+  packaging {
+    resources {
+      excludes += listOf(
+        "META-INF/*.version",
+        "META-INF/LICENSE*",
+        "META-INF/NOTICE*",
+        "META-INF/AL2.0",
+        "META-INF/LGPL2.1",
+        "META-INF/*.kotlin_module",
+        "DebugProbesKt.bin",
+        "kotlin-tooling-metadata.json"
+      )
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true

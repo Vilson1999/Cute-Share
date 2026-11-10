@@ -74,6 +74,16 @@ fun ReceiveRadarScreen(
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val is5GhzSupported = remember {
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifi?.is5GHzBandSupported ?: true
+        } catch (_: Exception) {
+            true
+        }
+    }
+
     val userAvatarGlow = remember(userProfile.avatarRes) {
         CartoonAvatars.list.find { it.drawableRes == userProfile.avatarRes }?.glowColor ?: Color(0xFF00E5FF)
     }
@@ -142,9 +152,8 @@ fun ReceiveRadarScreen(
             Spacer(modifier = Modifier.size(44.dp))
         }
 
-        // USER NAME BADGE: MOVED UP 50% (37.5% UP OF CENTER SCREEN) - NO IP SHOWN
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
+        // Wi-Fi Direct Indicator Badge (No user name floating badge)
+        Box(
             modifier = Modifier
                 .align(Alignment.Center)
                 .offset(y = -(maxHeight * 0.375f))
@@ -152,31 +161,31 @@ fun ReceiveRadarScreen(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
-                    .border(1.dp, userAvatarGlow.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
-                    .padding(horizontal = 18.dp, vertical = 9.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
+                    .border(1.dp, userAvatarGlow.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(22.dp)
+                        .size(18.dp)
                         .clip(CircleShape)
                         .background(userAvatarGlow.copy(alpha = 0.2f))
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.Person,
+                        imageVector = Icons.Rounded.Wifi,
                         contentDescription = null,
                         tint = userAvatarGlow,
-                        modifier = Modifier.size(14.dp)
+                        modifier = Modifier.size(12.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = userProfile.name,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    text = if (is5GhzSupported) "Wi-Fi Direct Active • 5 GHz Ready" else "Wi-Fi Direct Active • Direct P2P",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

@@ -244,6 +244,10 @@ class MainViewModel : ViewModel() {
             userProfile = _userProfile.value,
             onSessionStarted = {
                 viewModelScope.launch(Dispatchers.Main) {
+                    val sess = p2pTransferManager?.currentSession?.value
+                    if (sess != null) {
+                        _activeSession.value = sess
+                    }
                     _currentScreen.value = Screen.TRANSFER
                 }
             }
@@ -308,13 +312,19 @@ class MainViewModel : ViewModel() {
             senderProfile = _userProfile.value
         )
 
-        // Mirror in localTransferManager for consistent state
-        localTransferManager.startTransfer(
-            files = files,
-            isOutgoing = true,
-            peerName = peer.name,
-            avatarRes = peer.avatarRes
-        )
+        val sess = p2pTransferManager?.currentSession?.value
+        if (sess != null) {
+            _activeSession.value = sess
+        } else {
+            // Fallback for tests if p2pTransferManager is null
+            localTransferManager.startTransfer(
+                files = files,
+                isOutgoing = true,
+                peerName = peer.name,
+                avatarRes = peer.avatarRes
+            )
+            _activeSession.value = localTransferManager.currentSession.value
+        }
 
         viewModelScope.launch(Dispatchers.Main) {
             _currentScreen.value = Screen.TRANSFER
