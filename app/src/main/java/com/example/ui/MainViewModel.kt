@@ -104,6 +104,10 @@ class MainViewModel : ViewModel() {
             manager.currentSession.collect { session ->
                 if (session != null) {
                     _activeSession.value = session
+                    // Automatically transition both receiver and sender to TRANSFER screen when session begins
+                    if (_currentScreen.value == Screen.RECEIVE_RADAR || _currentScreen.value == Screen.PEER_SELECTION) {
+                        _currentScreen.value = Screen.TRANSFER
+                    }
                 }
             }
         }
@@ -244,10 +248,6 @@ class MainViewModel : ViewModel() {
             userProfile = _userProfile.value,
             onSessionStarted = {
                 viewModelScope.launch(Dispatchers.Main) {
-                    val sess = p2pTransferManager?.currentSession?.value
-                    if (sess != null) {
-                        _activeSession.value = sess
-                    }
                     _currentScreen.value = Screen.TRANSFER
                 }
             }
@@ -311,20 +311,7 @@ class MainViewModel : ViewModel() {
             files = files,
             senderProfile = _userProfile.value
         )
-
-        val sess = p2pTransferManager?.currentSession?.value
-        if (sess != null) {
-            _activeSession.value = sess
-        } else {
-            // Fallback for tests if p2pTransferManager is null
-            localTransferManager.startTransfer(
-                files = files,
-                isOutgoing = true,
-                peerName = peer.name,
-                avatarRes = peer.avatarRes
-            )
-            _activeSession.value = localTransferManager.currentSession.value
-        }
+        _activeSession.value = p2pTransferManager?.currentSession?.value
 
         viewModelScope.launch(Dispatchers.Main) {
             _currentScreen.value = Screen.TRANSFER

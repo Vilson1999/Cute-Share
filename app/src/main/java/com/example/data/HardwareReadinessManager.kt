@@ -27,10 +27,7 @@ object HardwareReadinessManager {
     fun isBluetoothEnabled(context: Context): Boolean {
         return try {
             val bm = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            val adapter = bm?.adapter ?: if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
-                @Suppress("DEPRECATION")
-                BluetoothAdapter.getDefaultAdapter()
-            } else null
+            val adapter = bm?.adapter ?: BluetoothAdapter.getDefaultAdapter()
             adapter?.isEnabled == true
         } catch (_: Exception) {
             true

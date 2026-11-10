@@ -105,43 +105,73 @@ fun FilePickerScreen(
     ) { uris: List<Uri> ->
         if (uris.isNotEmpty()) {
             uris.forEach { uri ->
-                val cursor = context.contentResolver.query(uri, null, null, null, null)
-                val displayName = cursor?.use {
-                    if (it.moveToFirst()) {
-                        val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                        if (nameIndex != -1) it.getString(nameIndex) else null
-                    } else null
-                } ?: "Selected_File_${System.currentTimeMillis()}"
+                try {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {}
 
-                val size = cursor?.use {
-                    if (it.moveToFirst()) {
-                        val sizeIndex = it.getColumnIndex(OpenableColumns.SIZE)
-                        if (sizeIndex != -1) it.getLong(sizeIndex) else 1_048_576L
-                    } else 1_048_576L
-                } ?: 1_048_576L
+                var displayName: String? = null
+                var size: Long = 0L
 
-                val ext = displayName.substringAfterLast('.', "").uppercase()
+                try {
+                    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                            if (nameIndex != -1) {
+                                displayName = cursor.getString(nameIndex)
+                            }
+                            val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                            if (sizeIndex != -1) {
+                                size = cursor.getLong(sizeIndex)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                val validName: String = displayName?.takeIf { it.isNotBlank() }
+                    ?: (uri.lastPathSegment?.substringAfterLast('/') ?: "File_${System.currentTimeMillis()}")
+
+                var resolvedSize = size
+                if (resolvedSize <= 0L) {
+                    try {
+                        context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                            resolvedSize = pfd.statSize.coerceAtLeast(0L)
+                        }
+                    } catch (_: Exception) {}
+                    if (resolvedSize <= 0L) resolvedSize = 1024L
+                }
+
+                val ext = validName.substringAfterLast('.', "").uppercase(java.util.Locale.ROOT)
+                val isApk = ext == "APK"
                 val detectedCat = when (ext) {
-                    "JPG", "JPEG", "PNG", "WEBP", "GIF", "HEIC", "BMP" -> FileCategory.IMAGE
-                    "MP4", "MKV", "MOV", "AVI", "3GP", "WEBM" -> FileCategory.VIDEO
-                    "MP3", "FLAC", "WAV", "M4A", "AAC", "OGG" -> FileCategory.AUDIO
+                    "JPG", "JPEG", "PNG", "WEBP", "GIF", "HEIC", "BMP", "SVG" -> FileCategory.IMAGE
+                    "MP4", "MKV", "MOV", "AVI", "3GP", "WEBM", "M4V", "FLV" -> FileCategory.VIDEO
+                    "MP3", "FLAC", "WAV", "M4A", "AAC", "OGG", "OPUS", "WMA" -> FileCategory.AUDIO
                     else -> FileCategory.APP
                 }
 
-                val isApk = ext == "APK"
                 val newFile = SharedFile(
                     id = UUID.randomUUID().toString(),
-                    name = displayName,
-                    sizeBytes = size,
-                    formattedSize = formatBytes(size),
+                    name = validName,
+                    sizeBytes = resolvedSize,
+                    formattedSize = formatBytes(resolvedSize),
                     category = detectedCat,
                     extension = ext.ifEmpty { "FILE" },
-                    lastModified = if (isApk) "Downloaded APK" else "Device Storage",
+                    lastModified = if (isApk) "Apk App" else "Storage File",
                     uriString = uri.toString(),
-                    isDownloadedApk = isApk
+                    isDownloadedApk = true
                 )
+
+                allFiles.removeAll { it.name.equals(newFile.name, ignoreCase = true) && it.sizeBytes == newFile.sizeBytes }
                 allFiles.add(0, newFile)
-                selectedFileIds.add(newFile.id)
+                if (!selectedFileIds.contains(newFile.id)) {
+                    selectedFileIds.add(newFile.id)
+                }
+
+                // Switch to matching tab so user immediately sees their picked file
+                selectedCategory = detectedCat
             }
         }
     }
@@ -724,7 +754,7 @@ private fun AudioVideoListItem(
 
 /**
  * 3. App View: Exactly 5 columns with installed applications at top,
- * and downloaded APK files shown below using the APK icon as thumbnail.
+ * and Apk Apps shown below using the APK icon as thumbnail.
  */
 @Composable
 private fun AppGridSection(
@@ -776,7 +806,7 @@ private fun AppGridSection(
             )
         }
 
-        // Section 2: APK Files from SD Card & Storage
+        // Section 2: Apk Apps
         item(span = { GridItemSpan(5) }) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -792,16 +822,10 @@ private fun AppGridSection(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "APK Files (${downloadedApks.size})",
+                    text = "Apk Apps (${downloadedApks.size})",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "• SD Card & Storage",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -809,7 +833,7 @@ private fun AppGridSection(
         if (downloadedApks.isEmpty()) {
             item(span = { GridItemSpan(5) }) {
                 Text(
-                    text = "No .apk files found on SD card or storage",
+                    text = "No .apk apps found in storage",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 8.dp)

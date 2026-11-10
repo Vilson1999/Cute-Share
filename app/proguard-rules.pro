@@ -1,19 +1,21 @@
-# Cute Share ProGuard / R8 Optimization Rules
-# Optimize bytecode and strip unused classes & methods to minimize APK size
+# Add project specific ProGuard rules here.
+# You can control the set of applied configuration files using the
+# proguardFiles setting in build.gradle.
+#
+# For more details, see
+#   http://developer.android.com/guide/developing/tools/proguard.html
 
--dontobfuscate
--keepattributes SourceFile,LineNumberTable,*Annotation*
+# If your project uses WebView with JS, uncomment the following
+# and specify the fully qualified class name to the JavaScript interface
+# class:
+#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
+#   public *;
+#}
 
-# Keep Compose runtime annotations
--keepclassmembers class * {
-    @androidx.compose.runtime.Composable *;
-}
+# Uncomment this to preserve the line number information for
+# debugging stack traces.
+#-keepattributes SourceFile,LineNumberTable
 
-# Keep app data models & ViewModel
--keep class com.example.model.** { *; }
--keep class com.example.data.** { *; }
--keep class com.example.ui.MainViewModel { *; }
-
-# Allow stripping unused metadata
--dontwarn **
--dontnote **
+# If you keep the line number information, uncomment this to
+# hide the original source file name.
+#-renamesourcefileattribute SourceFile
