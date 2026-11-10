@@ -1,10 +1,10 @@
 package com.example
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -15,8 +15,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
+import androidx.core.content.edit
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.IntentFileResolver
@@ -37,7 +36,9 @@ class MainActivity : ComponentActivity() {
         val name = prefs.getString("profile_name", "Cute Explorer") ?: "Cute Explorer"
         val avatarRes = prefs.getInt("profile_avatar", R.drawable.avatar_1_bunny)
         viewModel.attachContext(this)
-        viewModel.initProfile(name = name, avatarRes = avatarRes, isCreated = isCreated)
+        if (!viewModel.hasInitializedProfile) {
+            viewModel.initProfile(name = name, avatarRes = avatarRes, isCreated = isCreated)
+        }
 
         handleIntent(intent)
         enableEdgeToEdge()
@@ -54,18 +55,17 @@ class MainActivity : ComponentActivity() {
             // Persist profile when user saves it
             LaunchedEffect(userProfile) {
                 if (userProfile.isCreated) {
-                    prefs.edit()
-                        .putBoolean("profile_created", true)
-                        .putString("profile_name", userProfile.name)
-                        .putInt("profile_avatar", userProfile.avatarRes)
-                        .apply()
+                    prefs.edit {
+                        putBoolean("profile_created", true)
+                        putString("profile_name", userProfile.name)
+                        putInt("profile_avatar", userProfile.avatarRes)
+                    }
                 }
             }
 
-            val view = LocalView.current
-            if (!view.isInEditMode) {
-                val window = (LocalContext.current as Activity).window
-                DisposableEffect(isDark) {
+            val window = LocalActivity.current?.window
+            if (window != null) {
+                DisposableEffect(isDark, window) {
                     val insetsController = WindowCompat.getInsetsController(window, window.decorView)
                     insetsController.isAppearanceLightStatusBars = !isDark
                     insetsController.isAppearanceLightNavigationBars = !isDark

@@ -1,10 +1,10 @@
 package com.example.ui
 
 import android.content.Context
+import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.R
-import com.example.data.NetworkUtils
 import com.example.data.P2PTransferManager
 import com.example.data.TransferManager
 import com.example.model.CartoonAvatars
@@ -146,15 +146,19 @@ class MainViewModel : ViewModel() {
         markPermissionsAsked()
     }
 
+    var hasInitializedProfile: Boolean = false
+        private set
+
     private fun markPermissionsAsked() {
         _hasAskedPermissions.value = true
         applicationContext?.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
-            ?.edit()
-            ?.putBoolean("has_asked_permissions", true)
-            ?.apply()
+            ?.edit {
+                putBoolean("has_asked_permissions", true)
+            }
     }
 
     fun initProfile(name: String, avatarRes: Int, isCreated: Boolean) {
+        hasInitializedProfile = true
         _userProfile.value = UserProfile(
             name = name.ifEmpty { "Cute Explorer" },
             avatarRes = avatarRes,
@@ -230,6 +234,9 @@ class MainViewModel : ViewModel() {
 
     private fun handleScreenLifecycle(from: Screen, to: Screen) {
         if (from == Screen.RECEIVE_RADAR && to != Screen.RECEIVE_RADAR) {
+            p2pTransferManager?.stopReceiver()
+        }
+        if (from == Screen.TRANSFER && to != Screen.TRANSFER && to != Screen.FILE_PICKER && !isTransferActive()) {
             p2pTransferManager?.stopReceiver()
         }
         if (from == Screen.PEER_SELECTION && to != Screen.PEER_SELECTION) {

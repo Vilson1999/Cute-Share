@@ -1,12 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -26,14 +21,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.CallReceived
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.FolderZip
-import androidx.compose.material.icons.rounded.NearMe
-import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Speed
-import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -53,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.TransferSession
+import com.example.ui.icons.AppIcons
 
 @Composable
 fun RealTimeTransferMonitor(
@@ -67,16 +57,6 @@ fun RealTimeTransferMonitor(
         label = "monitor_progress"
     )
 
-    val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
-    val shimmerOffset by infiniteTransition.animateFloat(
-        initialValue = -0.5f,
-        targetValue = 1.5f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1600, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shimmer_anim"
-    )
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -99,7 +79,7 @@ fun RealTimeTransferMonitor(
             ) {
                 // Real Time Speed at top
                 MonitorMetricCard(
-                    icon = Icons.Rounded.Speed,
+                    icon = AppIcons.Speed,
                     title = "SPEED",
                     value = session.formattedSpeed,
                     iconTint = Color(0xFF10B981),
@@ -111,7 +91,7 @@ fun RealTimeTransferMonitor(
 
                 // Left Time at top
                 MonitorMetricCard(
-                    icon = Icons.Rounded.Timer,
+                    icon = AppIcons.Timer,
                     title = "LEFT TIME",
                     value = session.formattedRemainingTime,
                     iconTint = Color(0xFFF59E0B),
@@ -123,7 +103,7 @@ fun RealTimeTransferMonitor(
 
                 // Total File Size at top
                 MonitorMetricCard(
-                    icon = Icons.Rounded.FolderZip,
+                    icon = AppIcons.FolderZip,
                     title = "TOTAL SIZE",
                     value = session.formattedTotalSize,
                     iconTint = Color(0xFF00E5FF),
@@ -233,7 +213,7 @@ fun RealTimeTransferMonitor(
                                     )
                             ) {
                                 Icon(
-                                    imageVector = if (session.isOutgoing) Icons.Rounded.NearMe else Icons.AutoMirrored.Rounded.CallReceived,
+                                    imageVector = if (session.isOutgoing) AppIcons.NearMe else AppIcons.CallReceived,
                                     contentDescription = null,
                                     tint = if (session.isOutgoing) Color(0xFF10B981) else Color(0xFF00E5FF),
                                     modifier = Modifier.size(10.dp)
@@ -245,7 +225,7 @@ fun RealTimeTransferMonitor(
 
                         Text(
                             text = when {
-                                session.isCompleted -> "All files transferred"
+                                session.isCompleted -> if (session.isOutgoing) "All files transferred" else "Saved to Download/Cute Share"
                                 session.isCancelled -> "Transfer cancelled"
                                 session.isPaused -> "Paused"
                                 else -> "${session.files.count { it.status == com.example.model.TransferStatus.COMPLETED }}/${session.files.size} completed"
@@ -269,7 +249,7 @@ fun RealTimeTransferMonitor(
                     ) {
                         // Pause / Resume Button
                         StyledIconBox(
-                            icon = if (session.isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                            icon = if (session.isPaused) Icons.Rounded.PlayArrow else AppIcons.Pause,
                             contentDescription = if (session.isPaused) "Resume" else "Pause",
                             size = 38.dp,
                             iconSize = 20.dp,

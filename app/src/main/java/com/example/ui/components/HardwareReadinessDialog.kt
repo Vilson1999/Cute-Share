@@ -17,12 +17,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.LocationOn
-import androidx.compose.material.icons.rounded.NearMe
-import androidx.compose.material.icons.rounded.Wifi
-import androidx.compose.material.icons.rounded.WifiTethering
+import com.example.ui.icons.AppIcons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -32,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +45,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.HardwareReadinessManager
 
 @Composable
@@ -63,6 +64,7 @@ fun HardwareReadinessDialog(
     var hasNearbyWifiPerm by remember { mutableStateOf(HardwareReadinessManager.hasNearbyWifiPermission(context)) }
     var hasBluetoothPerm by remember { mutableStateOf(HardwareReadinessManager.hasBluetoothPermissions(context)) }
     var hasLocPerm by remember { mutableStateOf(HardwareReadinessManager.hasLocationPermission(context)) }
+    var hasDownloadWritePerm by remember { mutableStateOf(HardwareReadinessManager.hasPublicDownloadWritePermission(context)) }
 
     fun refreshStates() {
         isWifiOn = HardwareReadinessManager.isWifiEnabled(context)
@@ -71,6 +73,7 @@ fun HardwareReadinessDialog(
         hasNearbyWifiPerm = HardwareReadinessManager.hasNearbyWifiPermission(context)
         hasBluetoothPerm = HardwareReadinessManager.hasBluetoothPermissions(context)
         hasLocPerm = HardwareReadinessManager.hasLocationPermission(context)
+        hasDownloadWritePerm = HardwareReadinessManager.hasPublicDownloadWritePermission(context)
     }
 
     val permissionsLauncher = rememberLauncherForActivityResult(
@@ -97,15 +100,39 @@ fun HardwareReadinessDialog(
         refreshStates()
     }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshStates()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(Unit) {
         refreshStates()
     }
 
+    val isCompletelyReady = isWifiOn && isBluetoothOn && isLocationOn &&
+            hasNearbyWifiPerm && hasBluetoothPerm && hasLocPerm && hasDownloadWritePerm
+
+    LaunchedEffect(isCompletelyReady) {
+        if (isCompletelyReady) {
+            onAllReady()
+        }
+    }
+
     fun autoEnableAll() {
-        // 1. Request missing permissions
         val missingPermissions = mutableListOf<String>()
         if (!hasLocPerm) {
             missingPermissions.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
+            missingPermissions.add(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+        if (!hasDownloadWritePerm && android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+            missingPermissions.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            missingPermissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
         }
         if (!hasNearbyWifiPerm && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             missingPermissions.add(android.Manifest.permission.NEARBY_WIFI_DEVICES)
@@ -122,31 +149,29 @@ fun HardwareReadinessDialog(
         }
         if (missingPermissions.isNotEmpty()) {
             permissionsLauncher.launch(missingPermissions.toTypedArray())
+            return
         }
 
-        // 2. Auto-enable Bluetooth
         if (!isBluetoothOn) {
             try {
                 bluetoothLauncher.launch(HardwareReadinessManager.getEnableBluetoothIntent())
+                return
             } catch (_: Exception) {}
         }
 
-        // 3. Auto-enable Wi-Fi
         if (!isWifiOn) {
             try {
                 wifiSettingsLauncher.launch(HardwareReadinessManager.getEnableWifiIntent())
+                return
             } catch (_: Exception) {}
         }
 
-        // 4. Prompt Location if disabled
         if (!isLocationOn) {
             try {
                 locationSettingsLauncher.launch(HardwareReadinessManager.getEnableLocationIntent())
             } catch (_: Exception) {}
         }
     }
-
-    val isCompletelyReady = isWifiOn && isBluetoothOn && isLocationOn && hasNearbyWifiPerm && hasBluetoothPerm && hasLocPerm
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -160,7 +185,7 @@ fun HardwareReadinessDialog(
                         .background(Color(0xFF00E5FF).copy(alpha = 0.2f))
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.WifiTethering,
+                        imageVector = AppIcons.WifiTethering,
                         contentDescription = null,
                         tint = Color(0xFF00E5FF),
                         modifier = Modifier.size(24.dp)
@@ -198,7 +223,7 @@ fun HardwareReadinessDialog(
                 HardwareStatusItem(
                     title = "Wi-Fi Direct",
                     subtitle = "Direct device connection (no router needed)",
-                    icon = Icons.Rounded.Wifi,
+                    icon = AppIcons.Wifi,
                     iconColor = Color(0xFF00E5FF),
                     isReady = isWifiOn,
                     onEnable = {
@@ -211,7 +236,7 @@ fun HardwareReadinessDialog(
                 HardwareStatusItem(
                     title = "Bluetooth",
                     subtitle = "Nearby peer advertising, pairing and transfer",
-                    icon = Icons.Rounded.Bluetooth,
+                    icon = AppIcons.Bluetooth,
                     iconColor = Color(0xFF38BDF8),
                     isReady = isBluetoothOn && hasBluetoothPerm,
                     onEnable = {
@@ -240,7 +265,7 @@ fun HardwareReadinessDialog(
                 HardwareStatusItem(
                     title = "Nearby Devices",
                     subtitle = "Required to scan and connect with nearby phones",
-                    icon = Icons.Rounded.NearMe,
+                    icon = AppIcons.NearMe,
                     iconColor = Color(0xFFA855F7),
                     isReady = hasNearbyWifiPerm,
                     onEnable = {
@@ -257,9 +282,18 @@ fun HardwareReadinessDialog(
                     iconColor = Color(0xFF10B981),
                     isReady = isLocationOn && hasLocPerm,
                     onEnable = {
-                        try {
-                            locationSettingsLauncher.launch(HardwareReadinessManager.getEnableLocationIntent())
-                        } catch (_: Exception) {}
+                        if (!hasLocPerm) {
+                            permissionsLauncher.launch(
+                                arrayOf(
+                                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                                )
+                            )
+                        } else {
+                            try {
+                                locationSettingsLauncher.launch(HardwareReadinessManager.getEnableLocationIntent())
+                            } catch (_: Exception) {}
+                        }
                     }
                 )
             }
@@ -271,7 +305,6 @@ fun HardwareReadinessDialog(
                         onAllReady()
                     } else {
                         autoEnableAll()
-                        onAllReady()
                     }
                 },
                 shape = RoundedCornerShape(14.dp),

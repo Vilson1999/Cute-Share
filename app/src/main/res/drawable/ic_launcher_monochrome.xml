@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Rounded square container (square with circular corners inside 66dp safe zone) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5"
+        android:pathData="M37,26 L71,26 Q82,26 82,37 L82,71 Q82,82 71,82 L37,82 Q26,82 26,71 L26,37 Q26,26 37,26 Z" />
+    <!-- Mini Share / Send paper-plane (upper-left) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M53,36 L34,43.5 C32.8,44 32.8,45.8 34.1,46.3 L41.5,49 L44.2,56.4 C44.7,57.7 46.5,57.7 47,56.5 L54.5,37.5 C55,36.2 54,35.5 53,36 Z" />
+    <!-- Mini Receive downward arrow (lower-right) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M62,51 L65,51 L65,59 L68.5,59 L63.5,65.2 L58.5,59 L62,59 Z" />
+    <!-- Mini Receive open tray -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M55,65.5 L55,70.5 C55,72.2 56.3,73.5 58,73.5 L69,73.5 C70.7,73.5 72,72.2 72,70.5 L72,65.5 C72,64.7 71.3,64 70.5,64 C69.7,64 69,64.7 69,65.5 L69,70.5 L58,70.5 L58,65.5 C58,64.7 57.3,64 56.5,64 C55.7,64 55,64.7 55,65.5 Z" />
+</vector>

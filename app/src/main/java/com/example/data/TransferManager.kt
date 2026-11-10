@@ -1,6 +1,5 @@
 package com.example.data
 
-import com.example.model.FileCategory
 import com.example.model.SharedFile
 import com.example.model.TransferFileItem
 import com.example.model.TransferSession
@@ -200,10 +199,12 @@ class TransferManager(
                     item.copy(status = TransferStatus.CANCELLED)
                 } else item
             }
-            val allDone = updated.all { it.isFinished }
+            val allFinished = updated.all { it.isFinished }
+            val anyCompleted = updated.any { it.status == TransferStatus.COMPLETED }
             session.copy(
                 files = updated,
-                isCompleted = allDone
+                isCompleted = allFinished && anyCompleted,
+                isCancelled = allFinished && !anyCompleted
             )
         }
     }

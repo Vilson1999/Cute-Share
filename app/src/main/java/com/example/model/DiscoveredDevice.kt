@@ -6,6 +6,7 @@ data class DiscoveredDevice(
     val avatarRes: Int,
     val ip: String,
     val port: Int,
+    val p2pMacAddress: String? = null,
     val supports5Ghz: Boolean = true,
     val is5GhzActive: Boolean = false,
     val lastSeenTimestamp: Long = System.currentTimeMillis()

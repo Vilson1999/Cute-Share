@@ -36,10 +36,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -57,15 +54,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.FileCategory
-import com.example.model.SharedFile
 import com.example.model.TransferFileItem
 import com.example.model.TransferSession
 import com.example.model.TransferStatus
-import com.example.model.formatBytes
 import com.example.ui.components.RealTimeTransferMonitor
 import com.example.ui.components.StyledIconBox
-import java.util.UUID
+import com.example.ui.icons.AppIcons
 
 @Composable
 fun TransferScreen(
@@ -246,7 +240,7 @@ fun TransferScreen(
                                     .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), CircleShape)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Rounded.Speed,
+                                    imageVector = AppIcons.Speed,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(32.dp)
@@ -402,7 +396,7 @@ private fun SharingFileListItem(
                     // Pause / Resume Icon Button on EVERY file
                     if (!isCompleted) {
                         StyledIconBox(
-                            icon = if (isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                            icon = if (isPaused) Icons.Rounded.PlayArrow else AppIcons.Pause,
                             contentDescription = if (isPaused) "Resume file" else "Pause file",
                             size = 38.dp,
                             iconSize = 20.dp,

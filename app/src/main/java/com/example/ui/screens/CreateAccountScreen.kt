@@ -32,7 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.RestartAlt
+import com.example.ui.icons.AppIcons
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -142,7 +142,7 @@ fun CreateAccountScreen(
                     modifier = Modifier.testTag("reset_profile_button")
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.RestartAlt,
+                        imageVector = AppIcons.RestartAlt,
                         contentDescription = "Reset Profile",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(16.dp)

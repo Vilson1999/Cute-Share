@@ -217,10 +217,12 @@ object DeviceFileScanner {
                     if (file.isHidden || file.name.startsWith(".")) continue
 
                     if (file.isDirectory) {
-                        // Skip system-protected Android data folders on Android 11+
+                        // Skip system-protected Android data folders and internal thumbnail cache
                         if (file.name.equals("Android", ignoreCase = true) ||
                             file.name.equals("data", ignoreCase = true) ||
-                            file.name.equals("obb", ignoreCase = true)
+                            file.name.equals("obb", ignoreCase = true) ||
+                            file.name.equals(".thumb_cache", ignoreCase = true) ||
+                            file.name.equals("thumb_cache", ignoreCase = true)
                         ) {
                             continue
                         }
@@ -313,6 +315,7 @@ object DeviceFileScanner {
                 File(root, "Movies"),
                 File(root, "Documents"),
                 File(root, "CuteShare"),
+                File(root, "Cute Share"),
                 File(root, "Bluetooth")
             )
 

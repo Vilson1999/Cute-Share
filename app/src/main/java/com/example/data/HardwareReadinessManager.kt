@@ -27,8 +27,7 @@ object HardwareReadinessManager {
     fun isBluetoothEnabled(context: Context): Boolean {
         return try {
             val bm = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            val adapter = bm?.adapter ?: BluetoothAdapter.getDefaultAdapter()
-            adapter?.isEnabled == true
+            bm?.adapter?.isEnabled == true
         } catch (_: Exception) {
             true
         }
@@ -64,9 +63,18 @@ object HardwareReadinessManager {
         return ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
 
+    fun hasPublicDownloadWritePermission(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
     fun isAllHardwareReady(context: Context): Boolean {
         return isWifiEnabled(context) && isBluetoothEnabled(context) && isLocationEnabled(context) &&
-                hasNearbyWifiPermission(context) && hasBluetoothPermissions(context) && hasLocationPermission(context)
+                hasNearbyWifiPermission(context) && hasBluetoothPermissions(context) &&
+                hasLocationPermission(context) && hasPublicDownloadWritePermission(context)
     }
 
     fun getEnableWifiIntent(): Intent {

@@ -2,7 +2,6 @@ package com.example.ui.components
 
 import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,18 +12,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Bluetooth
-import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LocationOn
-import androidx.compose.material.icons.rounded.NearMe
-import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -43,7 +37,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
+import androidx.core.content.edit
+import com.example.ui.icons.AppIcons
 
 @Composable
 fun PermissionsHandler(
@@ -54,13 +49,20 @@ fun PermissionsHandler(
     val context = LocalContext.current
     val permissionsToRequest = buildList {
         // 1. Storage & Media permissions
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            add(Manifest.permission.READ_MEDIA_IMAGES)
+            add(Manifest.permission.READ_MEDIA_VIDEO)
+            add(Manifest.permission.READ_MEDIA_AUDIO)
+            add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.READ_MEDIA_IMAGES)
             add(Manifest.permission.READ_MEDIA_VIDEO)
             add(Manifest.permission.READ_MEDIA_AUDIO)
         } else {
             add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+                add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
         }
 
         // 2. Nearby Devices permission (Android 13+ / API 33+)
@@ -87,10 +89,9 @@ fun PermissionsHandler(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         // Mark that permissions have been asked once
-        context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean("has_asked_permissions", true)
-            .apply()
+        context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE).edit {
+            putBoolean("has_asked_permissions", true)
+        }
 
         val anyGranted = results.values.any { it }
         onPermissionsResult(anyGranted)
@@ -100,10 +101,9 @@ fun PermissionsHandler(
     if (showDialog) {
         AlertDialog(
             onDismissRequest = {
-                context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
-                    .edit()
-                    .putBoolean("has_asked_permissions", true)
-                    .apply()
+                context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE).edit {
+                    putBoolean("has_asked_permissions", true)
+                }
                 onDismiss()
             },
             shape = RoundedCornerShape(24.dp),
@@ -129,28 +129,28 @@ fun PermissionsHandler(
                     )
 
                     PermissionItemRow(
-                        icon = Icons.Rounded.Folder,
+                        icon = AppIcons.Folder,
                         iconColor = Color(0xFF38BDF8),
                         title = "Storage & Files",
                         desc = "Select and save transferred photos, videos, and files"
                     )
 
                     PermissionItemRow(
-                        icon = Icons.Rounded.Wifi,
+                        icon = AppIcons.Wifi,
                         iconColor = Color(0xFF10B981),
                         title = "Wi-Fi Direct",
                         desc = "Direct high-speed wireless transfer up to 50 MB/s"
                     )
 
                     PermissionItemRow(
-                        icon = Icons.Rounded.Bluetooth,
+                        icon = AppIcons.Bluetooth,
                         iconColor = Color(0xFF3B82F6),
                         title = "Bluetooth",
                         desc = "Instantly discover and pair with nearby devices without internet"
                     )
 
                     PermissionItemRow(
-                        icon = Icons.Rounded.NearMe,
+                        icon = AppIcons.NearMe,
                         iconColor = Color(0xFFA855F7),
                         title = "Nearby Devices",
                         desc = "Scan and connect directly to nearby phones"
@@ -167,10 +167,9 @@ fun PermissionsHandler(
             confirmButton = {
                 Button(
                     onClick = {
-                        context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
-                            .edit()
-                            .putBoolean("has_asked_permissions", true)
-                            .apply()
+                        context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE).edit {
+                            putBoolean("has_asked_permissions", true)
+                        }
                         permissionLauncher.launch(permissionsToRequest)
                     },
                     shape = RoundedCornerShape(14.dp),
@@ -186,10 +185,9 @@ fun PermissionsHandler(
             dismissButton = {
                 TextButton(
                     onClick = {
-                        context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
-                            .edit()
-                            .putBoolean("has_asked_permissions", true)
-                            .apply()
+                        context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE).edit {
+                            putBoolean("has_asked_permissions", true)
+                        }
                         onDismiss()
                     },
                     modifier = Modifier.testTag("dismiss_permissions_button")

@@ -62,8 +62,7 @@ fun QuickShareApp(
         onPermissionsResult = { _ -> viewModel.onPermissionsHandled() }
     )
 
-    if (pendingHardwareSetupTarget != null) {
-        val target = pendingHardwareSetupTarget!!
+    pendingHardwareSetupTarget?.let { target ->
         HardwareReadinessDialog(
             actionName = if (target == Screen.FILE_PICKER) "Sharing" else "Receiving",
             onAllReady = {

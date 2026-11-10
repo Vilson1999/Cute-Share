@@ -39,11 +39,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
-import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.DoneAll
-import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.PlayArrow
+import com.example.ui.icons.AppIcons
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -254,7 +252,7 @@ fun FilePickerScreen(
                             .background(Color(0xFF00E5FF).copy(alpha = 0.2f))
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.FolderOpen,
+                            imageVector = AppIcons.FolderOpen,
                             contentDescription = "Browse device",
                             tint = Color(0xFF00E5FF),
                             modifier = Modifier.size(16.dp)
@@ -311,7 +309,7 @@ fun FilePickerScreen(
                     ) {
                         val allCategorySelected = filteredFiles.isNotEmpty() && selectedFileIds.containsAll(filteredFiles.map { it.id })
                         Icon(
-                            imageVector = if (allCategorySelected) Icons.Rounded.DoneAll else Icons.Rounded.Check,
+                            imageVector = if (allCategorySelected) AppIcons.DoneAll else Icons.Rounded.Check,
                             contentDescription = "Select all",
                             tint = if (allCategorySelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
@@ -374,7 +372,7 @@ fun FilePickerScreen(
                             shape = RoundedCornerShape(14.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.FolderOpen,
+                                imageVector = AppIcons.FolderOpen,
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp)
                             )

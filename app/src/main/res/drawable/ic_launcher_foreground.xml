@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/ic_cuteshare_app_icon"
+        android:drawable="@drawable/cuteshare_app_icon"
         android:gravity="center" />
 </layer-list>

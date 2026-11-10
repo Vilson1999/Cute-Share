@@ -151,4 +151,24 @@ object CartoonAvatars {
         val safeIndex = (index.coerceAtLeast(0)) % list.size
         return list[safeIndex]
     }
+
+    fun avatarIndexOf(drawableRes: Int): Int {
+        val idx = list.indexOfFirst { it.drawableRes == drawableRes }
+        return if (idx >= 0) idx else 0
+    }
+
+    fun resolveAvatarRes(rawValue: String?, indexHint: String? = null, fallbackSeed: String = ""): Int {
+        indexHint?.toIntOrNull()?.let { idx ->
+            if (idx in list.indices) return list[idx].drawableRes
+        }
+        rawValue?.toIntOrNull()?.let { value ->
+            if (list.any { it.drawableRes == value }) return value
+            if (value in list.indices) return list[value].drawableRes
+        }
+        if (fallbackSeed.isNotEmpty()) {
+            val idx = (fallbackSeed.hashCode() and 0x7FFFFFFF) % list.size
+            return list[idx].drawableRes
+        }
+        return list.first().drawableRes
+    }
 }

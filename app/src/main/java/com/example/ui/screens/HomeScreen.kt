@@ -27,12 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.CallReceived
-import androidx.compose.material.icons.rounded.DarkMode
-import androidx.compose.material.icons.rounded.LightMode
-import androidx.compose.material.icons.rounded.NearMe
-import androidx.compose.material.icons.rounded.SettingsBrightness
+import com.example.ui.icons.AppIcons
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -147,9 +142,9 @@ fun HomeScreen(
                 // Theme Switcher Button
                 StyledIconBox(
                     icon = when (themeMode) {
-                        ThemeMode.SYSTEM -> Icons.Rounded.SettingsBrightness
-                        ThemeMode.LIGHT -> Icons.Rounded.LightMode
-                        ThemeMode.DARK -> Icons.Rounded.DarkMode
+                        ThemeMode.SYSTEM -> AppIcons.SettingsBrightness
+                        ThemeMode.LIGHT -> AppIcons.LightMode
+                        ThemeMode.DARK -> AppIcons.DarkMode
                     },
                     contentDescription = "Switch theme: ${themeMode.title}",
                     size = 42.dp,
@@ -297,7 +292,7 @@ private fun BigCircleShareButton(
                         .background(Color.White.copy(alpha = 0.22f))
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.NearMe,
+                        imageVector = AppIcons.NearMe,
                         contentDescription = "Send",
                         tint = Color.White,
                         modifier = Modifier.size(iconSize * 0.62f)
@@ -376,7 +371,7 @@ private fun BigCircleReceiveButton(
                         .background(Color.White.copy(alpha = 0.22f))
                 ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.CallReceived,
+                        imageVector = AppIcons.CallReceived,
                         contentDescription = "Receive",
                         tint = Color.White,
                         modifier = Modifier.size(iconSize * 0.62f)
