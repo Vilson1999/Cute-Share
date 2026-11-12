@@ -71,6 +71,7 @@ fun TransferScreen(
     onToggleFilePause: (String) -> Unit,
     onCancelFile: (String) -> Unit,
     onShareMoreClick: () -> Unit = {},
+    onRetryTransfer: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -137,7 +138,8 @@ fun TransferScreen(
                     RealTimeTransferMonitor(
                         session = session,
                         onTogglePause = onToggleSessionPause,
-                        onCancel = onCancelSession
+                        onCancel = onCancelSession,
+                        onRetry = onRetryTransfer
                     )
                 }
 

@@ -1,26 +1,9 @@
 package com.example.data
 
-import android.Manifest
-import android.content.BroadcastReceiver
-import android.content.ContentValues
+import android.content.ContentUris
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.content.pm.PackageManager
-import android.media.MediaScannerConnection
-import android.net.Uri
-import android.net.wifi.p2p.WifiP2pConfig
-import android.net.wifi.p2p.WifiP2pDeviceList
-import android.net.wifi.p2p.WifiP2pInfo
-import android.net.wifi.p2p.WifiP2pManager
-import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
-import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
-import android.os.Build
-import android.os.Environment
+import android.net.wifi.p2p.WifiP2pDevice
 import android.provider.MediaStore
-import android.webkit.MimeTypeMap
-import androidx.core.content.ContextCompat
-import androidx.core.content.IntentCompat
 import androidx.core.net.toUri
 import com.example.model.CartoonAvatars
 import com.example.model.DiscoveredDevice
@@ -30,6 +13,7 @@ import com.example.model.TransferFileItem
 import com.example.model.TransferSession
 import com.example.model.TransferStatus
 import com.example.model.UserProfile
+import com.example.model.formatBytes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,41 +28,32 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
-import java.io.FileOutputStream
 import java.io.InputStream
-import java.io.OutputStream
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * P2PTransferManager handles direct device-to-device file discovery and high-speed offline
- * transfers using Android's Wi-Fi Direct (WifiP2pManager) API, DNS Service Discovery (DNS-SD),
- * and TCP byte streaming.
+ * Orchestrates peer discovery, Wi-Fi Direct group/link setup, LAN/NSD fallback,
+ * bidirectional GO/Client socket rendezvous, and verified TCP byte streaming.
  */
 class P2PTransferManager(
     private val context: Context,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
 ) {
-    // Current transfer session
     private val _currentSession = MutableStateFlow<TransferSession?>(null)
     val currentSession: StateFlow<TransferSession?> = _currentSession.asStateFlow()
 
-    // Transfer history
     private val _transferHistory = MutableStateFlow<List<TransferSession>>(emptyList())
     val transferHistory: StateFlow<List<TransferSession>> = _transferHistory.asStateFlow()
 
-    // Discovered Wi-Fi Direct peers (mapped with CuteShare profile names and cute avatars)
     private val _discoveredPeers = MutableStateFlow<List<DiscoveredDevice>>(emptyList())
     val discoveredPeers: StateFlow<List<DiscoveredDevice>> = _discoveredPeers.asStateFlow()
 
-    // Incoming transfer request prompt
     data class IncomingTransferRequest(
         val sender: DiscoveredDevice,
         val files: List<SharedFile>,
@@ -86,291 +61,250 @@ class P2PTransferManager(
         val acceptAction: () -> Unit,
         val declineAction: () -> Unit
     )
+
     private val _incomingRequest = MutableStateFlow<IncomingTransferRequest?>(null)
     val incomingRequest: StateFlow<IncomingTransferRequest?> = _incomingRequest.asStateFlow()
 
-    // Wi-Fi Direct System APIs
-    private val wifiP2pManager: WifiP2pManager? = try {
-        context.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
-    } catch (_: Exception) {
-        null
-    }
-    private var p2pChannel: WifiP2pManager.Channel? = null
-    private var isP2pReceiverRegistered = false
+    private val p2pController = WifiP2pController(context)
+    private val lanDiscovery = LanDiscoveryHelper(context, scope)
+
+    private data class CachedCutePeerMeta(
+        val name: String,
+        val avatarRes: Int,
+        val port: Int,
+        val lanIp: String? = null
+    )
 
     private val discoveredDevicesMap = ConcurrentHashMap<String, DiscoveredDevice>()
-    private val macToCuteProfileMap = ConcurrentHashMap<String, Pair<String, Int>>()
-    @Volatile
-    private var latestP2pGroupOwnerIp: String? = null
+    private val macToCuteProfileMap = ConcurrentHashMap<String, CachedCutePeerMeta>()
 
-    // Sockets and Jobs
+    @Volatile
+    private var isReceiverActive = false
+    @Volatile
+    private var isDiscoveryActive = false
+    @Volatile
+    private var discoveryStartedAtMs = 0L
+    @Volatile
+    private var activeListeningPort = TCP_TRANSFER_PORT
+    private val incomingTransferLock = AtomicBoolean(false)
+
+    // Sockets & Jobs
     private var serverSocket: ServerSocket? = null
     private var activeSocket: Socket? = null
     private var receiverServerJob: Job? = null
-    private var receiverBeaconJob: Job? = null
-    private var activeTransferJob: Job? = null
+    private var receiverSetupJob: Job? = null
+    private var receiverKeepAliveJob: Job? = null
+    private var reverseConnectJob: Job? = null
+    private var discoverySetupJob: Job? = null
     private var peerDiscoveryPollingJob: Job? = null
-    private var udpDiscoveryJob: Job? = null
-    private var dnsSdServiceInfo: WifiP2pDnsSdServiceInfo? = null
-    private var dnsSdServiceRequest: WifiP2pDnsSdServiceRequest? = null
+    private var activeTransferJob: Job? = null
+
+    @Volatile
+    private var latestReceiverProfile: UserProfile? = null
+    @Volatile
+    private var latestOnSessionStarted: (() -> Unit)? = null
 
     companion object {
-        const val UDP_DISCOVERY_PORT = 8889
+        const val UDP_DISCOVERY_PORT = NetworkUtils.UDP_DISCOVERY_PORT
         const val TCP_TRANSFER_PORT = NetworkUtils.WIFI_DIRECT_DEFAULT_PORT
+        const val REVERSE_HANDSHAKE_PORT = NetworkUtils.REVERSE_HANDSHAKE_PORT
         const val SERVICE_TYPE = "_cuteshare._tcp"
-        const val DOWNLOAD_SUBFOLDER = "Cute Share"
+        const val DOWNLOAD_SUBFOLDER = DownloadStorageHelper.DOWNLOAD_SUBFOLDER
 
-        fun sanitizeDownloadFileName(rawName: String, timestamp: Long = System.currentTimeMillis()): String {
-            val baseLeaf = rawName.substringAfterLast('/').substringAfterLast('\\')
-                .replace(Regex("[:*?\"<>|\\u0000-\\u001F]"), "_")
-                .trim()
-                .trimStart('.', ' ')
-            if (baseLeaf.isBlank() || baseLeaf == "." || baseLeaf == "..") {
-                return "CuteShare_$timestamp"
-            }
-            val dotIdx = baseLeaf.lastIndexOf('.')
-            return if (dotIdx in 1 until baseLeaf.length - 1) {
-                val stem = baseLeaf.substring(0, dotIdx).take(150).ifBlank { "CuteShare_$timestamp" }
-                val ext = baseLeaf.substring(dotIdx + 1).take(16)
-                "$stem.$ext"
-            } else {
-                baseLeaf.take(160)
-            }
-        }
-    }
+        fun sanitizeDownloadFileName(
+            rawName: String,
+            timestamp: Long = System.currentTimeMillis()
+        ): String = DownloadStorageHelper.sanitizeDownloadFileName(rawName, timestamp)
 
-    // Wi-Fi P2P BroadcastReceiver
-    private val wifiP2pReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            val action = intent?.action ?: return
-            when (action) {
-                WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
-                    val state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
-                    val isP2pEnabled = state == WifiP2pManager.WIFI_P2P_STATE_ENABLED
-                    if (!isP2pEnabled) {
-                        // Wi-Fi Direct disabled
+        /**
+         * Merges peers discovered concurrently over Wi-Fi Direct DNS-SD, NSD mDNS, UDP Beacon,
+         * and TCP Subnet Ping into unified peer bubbles retaining BOTH LAN IP and P2P MAC.
+         */
+        fun mergeDiscoveredPeers(peers: Collection<DiscoveredDevice>): List<DiscoveredDevice> {
+            if (peers.isEmpty()) return emptyList()
+            val merged = mutableListOf<DiscoveredDevice>()
+
+            for (peer in peers) {
+                val matchIdx = merged.indexOfFirst { existing ->
+                    if (peer.id.startsWith("manual_") || existing.id.startsWith("manual_")) {
+                        peer.id == existing.id
+                    } else {
+                        val sameMac = !peer.p2pMacAddress.isNullOrBlank() &&
+                            peer.p2pMacAddress.equals(existing.p2pMacAddress, ignoreCase = true)
+                        val sameProfile = peer.name.trim().equals(existing.name.trim(), ignoreCase = true) &&
+                            peer.avatarRes == existing.avatarRes
+                        sameMac || sameProfile
                     }
                 }
-                WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                    requestP2pPeers()
+
+                if (matchIdx == -1) {
+                    merged.add(peer)
+                    continue
                 }
-                WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
-                    val p2pInfo = IntentCompat.getParcelableExtra(
-                        intent,
-                        WifiP2pManager.EXTRA_WIFI_P2P_INFO,
-                        WifiP2pInfo::class.java
-                    )
-                    if (p2pInfo?.groupFormed == true) {
-                        requestConnectionInfo()
-                    }
+
+                val existing = merged[matchIdx]
+                val peerIsLan = peer.ip.isNotBlank() &&
+                    !peer.ip.startsWith("127.") &&
+                    peer.ip != NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP
+                val existingIsLan = existing.ip.isNotBlank() &&
+                    !existing.ip.startsWith("127.") &&
+                    existing.ip != NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP
+
+                val choosePeerNetwork = when {
+                    peerIsLan && !existingIsLan -> true
+                    !peerIsLan && existingIsLan -> false
+                    else -> peer.lastSeenTimestamp >= existing.lastSeenTimestamp
                 }
-                WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION -> {
-                    // Local device information updated
+
+                val existingHasGenericName = existing.id.startsWith("fallback_")
+                val peerHasGenericName = peer.id.startsWith("fallback_")
+                val preferredName = when {
+                    existingHasGenericName && !peerHasGenericName -> peer.name
+                    !existingHasGenericName && peerHasGenericName -> existing.name
+                    peer.lastSeenTimestamp >= existing.lastSeenTimestamp -> peer.name
+                    else -> existing.name
                 }
+                val preferredAvatar = when {
+                    existingHasGenericName && !peerHasGenericName -> peer.avatarRes
+                    else -> existing.avatarRes
+                }
+
+                merged[matchIdx] = existing.copy(
+                    id = if (choosePeerNetwork) peer.id else existing.id,
+                    name = preferredName,
+                    avatarRes = preferredAvatar,
+                    ip = if (choosePeerNetwork) peer.ip else existing.ip,
+                    port = if (choosePeerNetwork) peer.port else existing.port,
+                    p2pMacAddress = peer.p2pMacAddress ?: existing.p2pMacAddress,
+                    lastSeenTimestamp = maxOf(existing.lastSeenTimestamp, peer.lastSeenTimestamp)
+                )
             }
-        }
-    }
 
-    private fun hasWifiDirectPermission(): Boolean {
-        val hasFineLocation = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.NEARBY_WIFI_DEVICES
-            ) == PackageManager.PERMISSION_GRANTED || hasFineLocation
-        } else {
-            hasFineLocation
-        }
-    }
-
-    init {
-        try {
-            if (wifiP2pManager != null) {
-                p2pChannel = wifiP2pManager.initialize(context, context.mainLooper, null)
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun registerP2pReceiver() {
-        if (!isP2pReceiverRegistered) {
-            val filter = IntentFilter().apply {
-                addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
-                addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
-                addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
-                addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
-            }
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    context.registerReceiver(wifiP2pReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-                } else {
-                    context.registerReceiver(wifiP2pReceiver, filter)
-                }
-                isP2pReceiverRegistered = true
-            } catch (_: Exception) {}
-        }
-    }
-
-    private fun unregisterP2pReceiver() {
-        if (isP2pReceiverRegistered) {
-            try {
-                context.unregisterReceiver(wifiP2pReceiver)
-            } catch (_: Exception) {}
-            isP2pReceiverRegistered = false
+            return merged.sortedByDescending { it.lastSeenTimestamp }
         }
     }
 
     // =========================================================================
-    // WI-FI DIRECT SENDER: DISCOVER PEERS VIA DNS-SD, UDP BEACON, & P2P
+    // SENDER DISCOVERY (DNS-SD + NSD + UDP + FAST PARALLEL SUBNET PING + P2P)
     // =========================================================================
 
     fun startDiscovery(senderProfile: UserProfile) {
-        stopDiscovery()
+        stopDiscovery(keepP2pReceiver = false)
+        isDiscoveryActive = true
+        discoveryStartedAtMs = System.currentTimeMillis()
         discoveredDevicesMap.clear()
         _discoveredPeers.value = emptyList()
 
-        registerP2pReceiver()
+        p2pController.ensureReceiverRegistered(
+            onPeersUpdated = { devices -> processP2pPeerList(devices) },
+            onConnectionChanged = { snap -> handleP2pConnectionChanged(snap) }
+        )
 
-        val channel = p2pChannel
-        val manager = wifiP2pManager
+        // 1. NSD mDNS + UDP Broadcast Beacon Discovery
+        lanDiscovery.startDiscovery { peer ->
+            upsertDiscoveredPeer(peer)
+        }
 
-        // 1. Setup Wi-Fi Direct DNS-SD Service Discovery
-        if (manager != null && channel != null && hasWifiDirectPermission()) {
-            try {
-                manager.clearServiceRequests(channel, null)
-                val txtListener = WifiP2pManager.DnsSdTxtRecordListener { fullDomain, record, device ->
-                    val cuteName = record["name"]
-                    val avatarStr = record["avatar"]
-                    val avatarIdxStr = record["avatarIdx"]
-                    val portStr = record["port"]
-                    val resolvedName = if (!cuteName.isNullOrBlank()) cuteName else "Cute Friend"
-                    val avatarRes = CartoonAvatars.resolveAvatarRes(avatarStr, avatarIdxStr, resolvedName)
-                    val port = portStr?.toIntOrNull() ?: TCP_TRANSFER_PORT
-
-                    val id = device.deviceAddress ?: fullDomain
-                    macToCuteProfileMap[id] = Pair(resolvedName, avatarRes)
-
-                    val directPeer = DiscoveredDevice(
-                        id = id,
-                        name = resolvedName,
-                        avatarRes = avatarRes,
-                        ip = NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP,
-                        port = port,
-                        p2pMacAddress = device.deviceAddress,
-                        supports5Ghz = true,
-                        is5GhzActive = true,
-                        lastSeenTimestamp = System.currentTimeMillis()
+        // 2. Serialized Wi-Fi Direct DNS-SD + Peer Discovery
+        discoverySetupJob = scope.launch(Dispatchers.IO) {
+            p2pController.startServiceAndPeerDiscovery(
+                onTxtRecord = { fullDomain, record, device ->
+                    val mac = device.deviceAddress?.takeIf { it.isNotBlank() } ?: fullDomain
+                    val cuteName = record["name"]?.trim()?.ifBlank { null }
+                        ?: WifiP2pController.extractCuteShareNameFromInstance(device.deviceName)
+                        ?: "Cute Friend"
+                    val avatarRes = CartoonAvatars.resolveAvatarRes(
+                        rawValue = record["avatar"],
+                        indexHint = record["avatarIdx"],
+                        fallbackSeed = cuteName
                     )
-                    discoveredDevicesMap[id] = directPeer
-                    publishDiscoveredPeers()
+                    val port = record["port"]?.toIntOrNull() ?: TCP_TRANSFER_PORT
+                    val lanIp = record["lanIp"]?.trim()?.takeIf {
+                        it.isNotEmpty() && !it.startsWith("127.") && it != NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP
+                    }
+
+                    macToCuteProfileMap[mac] = CachedCutePeerMeta(
+                        name = cuteName,
+                        avatarRes = avatarRes,
+                        port = port,
+                        lanIp = lanIp
+                    )
+
+                    upsertDiscoveredPeer(
+                        DiscoveredDevice(
+                            id = mac,
+                            name = cuteName,
+                            avatarRes = avatarRes,
+                            ip = lanIp ?: NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP,
+                            port = port,
+                            p2pMacAddress = device.deviceAddress,
+                            supports5Ghz = true,
+                            is5GhzActive = true,
+                            lastSeenTimestamp = System.currentTimeMillis()
+                        )
+                    )
+                },
+                onServiceResponse = { instanceName, _, device ->
+                    val mac = device.deviceAddress ?: return@startServiceAndPeerDiscovery
+                    val existingMeta = macToCuteProfileMap[mac]
+                    val extractedName = WifiP2pController.extractCuteShareNameFromInstance(instanceName)
+
+                    if (existingMeta != null) {
+                        upsertDiscoveredPeer(
+                            DiscoveredDevice(
+                                id = mac,
+                                name = existingMeta.name,
+                                avatarRes = existingMeta.avatarRes,
+                                ip = existingMeta.lanIp ?: NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP,
+                                port = existingMeta.port,
+                                p2pMacAddress = mac,
+                                supports5Ghz = true,
+                                is5GhzActive = true,
+                                lastSeenTimestamp = System.currentTimeMillis()
+                            )
+                        )
+                    } else if (extractedName != null) {
+                        val fallbackAvatar = CartoonAvatars.resolveAvatarRes(null, null, extractedName)
+                        macToCuteProfileMap[mac] = CachedCutePeerMeta(
+                            name = extractedName,
+                            avatarRes = fallbackAvatar,
+                            port = TCP_TRANSFER_PORT
+                        )
+                        upsertDiscoveredPeer(
+                            DiscoveredDevice(
+                                id = mac,
+                                name = extractedName,
+                                avatarRes = fallbackAvatar,
+                                ip = NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP,
+                                port = TCP_TRANSFER_PORT,
+                                p2pMacAddress = mac,
+                                supports5Ghz = true,
+                                is5GhzActive = true,
+                                lastSeenTimestamp = System.currentTimeMillis()
+                            )
+                        )
+                    }
                 }
-
-                val servListener = WifiP2pManager.DnsSdServiceResponseListener { _, _, _ -> }
-                manager.setDnsSdResponseListeners(channel, servListener, txtListener)
-
-                val req = WifiP2pDnsSdServiceRequest.newInstance()
-                dnsSdServiceRequest = req
-                manager.addServiceRequest(channel, req, object : WifiP2pManager.ActionListener {
-                    override fun onSuccess() {
-                        if (!hasWifiDirectPermission()) return
-                        try {
-                            manager.discoverServices(channel, null)
-                        } catch (_: SecurityException) {
-                        } catch (_: Exception) {}
-                    }
-                    override fun onFailure(code: Int) {}
-                })
-            } catch (_: SecurityException) {
-            } catch (_: Exception) {}
-
-            try {
-                manager.discoverPeers(channel, object : WifiP2pManager.ActionListener {
-                    override fun onSuccess() {
-                        requestP2pPeers()
-                    }
-                    override fun onFailure(reason: Int) {}
-                })
-            } catch (_: SecurityException) {
-            } catch (_: Exception) {}
+            )
         }
 
-        // 2. Start UDP Discovery Listener for CuteShare Beacons
-        udpDiscoveryJob = scope.launch(Dispatchers.IO) {
-            var udpSocket: DatagramSocket? = null
-            try {
-                udpSocket = DatagramSocket(null).apply {
-                    reuseAddress = true
-                    bind(InetSocketAddress(UDP_DISCOVERY_PORT))
-                    soTimeout = 3000
-                }
-                val buffer = ByteArray(1024)
-                while (isActive && !udpSocket.isClosed) {
-                    try {
-                        val packet = DatagramPacket(buffer, buffer.size)
-                        udpSocket.receive(packet)
-                        val text = String(packet.data, 0, packet.length, Charsets.UTF_8).trim()
-                        if (text.startsWith("CUTESHARE_BEACON|")) {
-                            val parts = text.split("|")
-                            if (parts.size >= 4) {
-                                val cuteName = parts[1].ifBlank { "Cute Friend" }
-                                val avatarRes = CartoonAvatars.resolveAvatarRes(
-                                    rawValue = parts[2],
-                                    indexHint = parts.getOrNull(5),
-                                    fallbackSeed = cuteName
-                                )
-                                val port = parts[3].toIntOrNull() ?: TCP_TRANSFER_PORT
-                                val senderIp = packet.address.hostAddress ?: ""
-                                if (senderIp.isNotEmpty() && senderIp != NetworkUtils.getLocalIpAddress()) {
-                                    val id = "udp_${senderIp.replace('.', '_')}"
-                                    val peer = DiscoveredDevice(
-                                        id = id,
-                                        name = cuteName,
-                                        avatarRes = avatarRes,
-                                        ip = senderIp,
-                                        port = port,
-                                        supports5Ghz = true,
-                                        is5GhzActive = true,
-                                        lastSeenTimestamp = System.currentTimeMillis()
-                                    )
-                                    discoveredDevicesMap[id] = peer
-                                    publishDiscoveredPeers()
-                                }
-                            }
-                        }
-                    } catch (_: Exception) {
-                        if (!isActive) break
-                    }
-                }
-            } catch (_: Exception) {
-            } finally {
-                try { udpSocket?.close() } catch (_: Exception) {}
-            }
-        }
-
-        // 3. Periodic polling and TCP Subnet / Wi-Fi Direct GO ping
+        // 3. Periodic discovery refresh & parallel subnet probe
         peerDiscoveryPollingJob = scope.launch(Dispatchers.IO) {
             var cycle = 0
-            while (isActive) {
-                requestP2pPeers()
-                scanLocalSubnetForReceivers()
+            while (isActive && isDiscoveryActive) {
+                p2pController.requestPeersNonBlocking()
+                lanDiscovery.scanLocalSubnetForReceivers { peer ->
+                    upsertDiscoveredPeer(peer)
+                }
 
-                if (cycle > 0 && cycle % 2 == 0 && manager != null && channel != null && hasWifiDirectPermission()) {
-                    try {
-                        if (dnsSdServiceRequest != null) {
-                            manager.discoverServices(channel, null)
-                        }
-                        manager.discoverPeers(channel, null)
-                    } catch (_: SecurityException) {
-                    } catch (_: Exception) {}
+                if (cycle > 0 && cycle % 2 == 0) {
+                    p2pController.refreshDiscovery()
                 }
                 cycle++
 
-                // Remove peers not seen in the last 20 seconds
                 val now = System.currentTimeMillis()
                 val expiredIds = discoveredDevicesMap.filter { (id, peer) ->
-                    !id.startsWith("manual_") && (now - peer.lastSeenTimestamp > 20000L)
+                    !id.startsWith("manual_") && (now - peer.lastSeenTimestamp > 20_000L)
                 }.keys
                 if (expiredIds.isNotEmpty()) {
                     expiredIds.forEach { discoveredDevicesMap.remove(it) }
@@ -382,276 +316,173 @@ class P2PTransferManager(
         }
     }
 
-    private fun requestP2pPeers() {
-        val channel = p2pChannel ?: return
-        val manager = wifiP2pManager ?: return
-        if (!hasWifiDirectPermission()) return
-        try {
-            manager.requestPeers(channel) { peerList: WifiP2pDeviceList? ->
-                if (peerList != null) {
-                    val peers = peerList.deviceList
-                    if (peers.isNotEmpty()) {
-                        var addedOrUpdated = false
-                        for (dev in peers) {
-                            val id = dev.deviceAddress ?: continue
-                            val mappedProfile = macToCuteProfileMap[id]
-                            val dName = dev.deviceName
-                            val isAdvertisingCuteShare = mappedProfile != null ||
-                                (!dName.isNullOrBlank() && dName.startsWith("CuteShare_"))
-                            if (!isAdvertisingCuteShare) continue
+    private fun processP2pPeerList(peers: Collection<WifiP2pDevice>) {
+        if (!isDiscoveryActive) return
+        if (peers.isEmpty()) return
 
-                            val name = mappedProfile?.first
-                                ?: dName!!.removePrefix("CuteShare_").ifBlank { "Cute Friend" }
-                            val avatarRes = mappedProfile?.second
-                                ?: CartoonAvatars.resolveAvatarRes(null, null, id)
+        val elapsedSinceScanStart = System.currentTimeMillis() - discoveryStartedAtMs
+        val hasVerifiedCuteSharePeers = discoveredDevicesMap.keys.any { !it.startsWith("fallback_") }
+        val allowFallbackPhonePeers = elapsedSinceScanStart >= 5500L && !hasVerifiedCuteSharePeers
 
-                            val directPeer = DiscoveredDevice(
-                                id = id,
-                                name = name,
-                                avatarRes = avatarRes,
-                                ip = NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP,
-                                port = TCP_TRANSFER_PORT,
-                                p2pMacAddress = id,
-                                supports5Ghz = true,
-                                is5GhzActive = true,
-                                lastSeenTimestamp = System.currentTimeMillis()
-                            )
-                            discoveredDevicesMap[id] = directPeer
-                            addedOrUpdated = true
-                        }
-                        if (addedOrUpdated) {
-                            publishDiscoveredPeers()
-                        }
-                    }
-                }
+        var changed = false
+        for (dev in peers) {
+            val mac = dev.deviceAddress ?: continue
+            val mappedMeta = macToCuteProfileMap[mac]
+            val dName = dev.deviceName.orEmpty()
+            val instanceNameFromDev = WifiP2pController.extractCuteShareNameFromInstance(dName)
+            val isExplicitCuteShare = mappedMeta != null || instanceNameFromDev != null
+            val isGroupPeer = dev.isGroupOwner ||
+                dev.status == WifiP2pDevice.CONNECTED ||
+                dev.status == WifiP2pDevice.INVITED
+
+            val shouldInclude = isExplicitCuteShare || isGroupPeer ||
+                (allowFallbackPhonePeers && WifiP2pController.isPhoneOrTabletDeviceType(dev.primaryDeviceType))
+
+            if (!shouldInclude) continue
+
+            val name = mappedMeta?.name
+                ?: instanceNameFromDev
+                ?: dName.ifBlank { "Nearby Phone" }
+            val avatarRes = mappedMeta?.avatarRes
+                ?: CartoonAvatars.resolveAvatarRes(null, null, name)
+            val key = if (isExplicitCuteShare || isGroupPeer) mac else "fallback_$mac"
+            val peer = DiscoveredDevice(
+                id = key,
+                name = name,
+                avatarRes = avatarRes,
+                ip = mappedMeta?.lanIp ?: NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP,
+                port = mappedMeta?.port ?: TCP_TRANSFER_PORT,
+                p2pMacAddress = mac,
+                supports5Ghz = true,
+                is5GhzActive = true,
+                lastSeenTimestamp = System.currentTimeMillis()
+            )
+            if (isExplicitCuteShare) {
+                discoveredDevicesMap.remove("fallback_$mac")
             }
-        } catch (_: SecurityException) {
-        } catch (_: Exception) {}
+            discoveredDevicesMap[key] = peer
+            changed = true
+        }
+        if (changed) {
+            publishDiscoveredPeers()
+        }
     }
 
-    private suspend fun scanLocalSubnetForReceivers() = withContext(Dispatchers.IO) {
-        val myIp = NetworkUtils.getLocalIpAddress()
-        val candidateIps = mutableListOf<String>()
-        candidateIps.add(NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP)
-        candidateIps.add("192.168.43.1")
-
-        if (myIp != "127.0.0.1") {
-            val prefix = NetworkUtils.getSubnetPrefix(myIp)
-            if (prefix != null) {
-                val myHost = myIp.substringAfterLast('.', "0").toIntOrNull() ?: 0
-                candidateIps.add("${prefix}1")
-                for (i in 1..8) {
-                    val hUp = myHost + i
-                    val hDown = myHost - i
-                    if (hUp in 2..254) candidateIps.add("$prefix$hUp")
-                    if (hDown in 2..254) candidateIps.add("$prefix$hDown")
-                }
-            }
+    private fun upsertDiscoveredPeer(peer: DiscoveredDevice) {
+        if (!peer.p2pMacAddress.isNullOrBlank() && !peer.id.startsWith("fallback_")) {
+            macToCuteProfileMap[peer.p2pMacAddress] = CachedCutePeerMeta(
+                name = peer.name,
+                avatarRes = peer.avatarRes,
+                port = peer.port,
+                lanIp = peer.ip.takeIf { it != NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP }
+            )
+            discoveredDevicesMap.remove("fallback_${peer.p2pMacAddress}")
         }
-
-        for (targetIp in candidateIps.distinct()) {
-            if (targetIp == myIp) continue
-            try {
-                Socket().use { s ->
-                    s.tcpNoDelay = true
-                    s.connect(InetSocketAddress(targetIp, TCP_TRANSFER_PORT), 200)
-                    val out = BufferedOutputStream(s.getOutputStream())
-                    val inStream = BufferedInputStream(s.getInputStream())
-                    out.write("CUTESHARE_PING\n".toByteArray(Charsets.UTF_8))
-                    out.flush()
-                    val resp = readAsciiLine(inStream, maxLen = 256)
-                    if (resp.startsWith("CUTESHARE_PONG|")) {
-                        val parts = resp.split("|")
-                        if (parts.size >= 4) {
-                            val name = parts[1].ifBlank { "Cute Friend" }
-                            val avatarRes = CartoonAvatars.resolveAvatarRes(
-                                rawValue = parts[2],
-                                indexHint = parts.getOrNull(5),
-                                fallbackSeed = name
-                            )
-                            val port = parts[3].toIntOrNull() ?: TCP_TRANSFER_PORT
-                            val id = "lan_${targetIp.replace('.', '_')}"
-                            val peer = DiscoveredDevice(
-                                id = id,
-                                name = name,
-                                avatarRes = avatarRes,
-                                ip = targetIp,
-                                port = port,
-                                supports5Ghz = true,
-                                is5GhzActive = true,
-                                lastSeenTimestamp = System.currentTimeMillis()
-                            )
-                            discoveredDevicesMap[id] = peer
-                            publishDiscoveredPeers()
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-        }
+        discoveredDevicesMap[peer.id] = peer
+        publishDiscoveredPeers()
     }
 
     private fun publishDiscoveredPeers() {
-        val merged = mutableMapOf<String, DiscoveredDevice>()
-        for (peer in discoveredDevicesMap.values) {
-            val mergeKey = if (peer.id.startsWith("manual_")) {
-                peer.id
-            } else {
-                "${peer.name.trim().lowercase(Locale.ROOT)}_${peer.avatarRes}"
-            }
-            val existing = merged[mergeKey]
-            if (existing == null) {
-                merged[mergeKey] = peer
-            } else {
-                val peerIsLan = peer.ip.isNotBlank() && peer.ip != NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP
-                val existingIsLan = existing.ip.isNotBlank() && existing.ip != NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP
-                val preferredIp = when {
-                    peerIsLan && !existingIsLan -> peer.ip
-                    !peerIsLan && existingIsLan -> existing.ip
-                    peer.lastSeenTimestamp >= existing.lastSeenTimestamp -> peer.ip
-                    else -> existing.ip
-                }
-                merged[mergeKey] = existing.copy(
-                    id = if (preferredIp == peer.ip) peer.id else existing.id,
-                    ip = preferredIp,
-                    port = if (preferredIp == peer.ip) peer.port else existing.port,
-                    p2pMacAddress = existing.p2pMacAddress ?: peer.p2pMacAddress,
-                    lastSeenTimestamp = maxOf(existing.lastSeenTimestamp, peer.lastSeenTimestamp)
-                )
-            }
-        }
-        _discoveredPeers.value = merged.values.toList()
+        _discoveredPeers.value = mergeDiscoveredPeers(discoveredDevicesMap.values)
     }
 
-    fun stopDiscovery() {
+    fun stopDiscovery(keepP2pReceiver: Boolean = false) {
+        isDiscoveryActive = false
+        discoverySetupJob?.cancel()
+        discoverySetupJob = null
+
         peerDiscoveryPollingJob?.cancel()
         peerDiscoveryPollingJob = null
 
-        udpDiscoveryJob?.cancel()
-        udpDiscoveryJob = null
-
-        val channel = p2pChannel
-        val manager = wifiP2pManager
-        if (manager != null && channel != null) {
-            try {
-                manager.stopPeerDiscovery(channel, null)
-                dnsSdServiceRequest?.let { manager.removeServiceRequest(channel, it, null) }
-                dnsSdServiceRequest = null
-            } catch (_: Exception) {}
+        lanDiscovery.stopDiscovery()
+        if (!isReceiverActive && !keepP2pReceiver) {
+            lanDiscovery.releaseMulticastLock()
+            p2pController.unregisterReceiver()
         }
 
-        unregisterP2pReceiver()
+        if (!keepP2pReceiver) {
+            scope.launch(Dispatchers.IO) {
+                p2pController.stopScanningOnly()
+            }
+        }
+
         discoveredDevicesMap.clear()
         _discoveredPeers.value = emptyList()
     }
 
-    private fun requestConnectionInfo() {
-        val channel = p2pChannel ?: return
-        val manager = wifiP2pManager ?: return
-        try {
-            manager.requestConnectionInfo(channel) { info: WifiP2pInfo? ->
-                if (info?.groupFormed == true) {
-                    latestP2pGroupOwnerIp = info.groupOwnerAddress?.hostAddress
-                }
-            }
-        } catch (_: Exception) {}
-    }
-
     // =========================================================================
-    // WI-FI DIRECT RECEIVER: ADVERTISE CUTESHARE USER & ACCEPT TCP CONNECTIONS
+    // RECEIVER: ADVERTISE SERVICE + GO GROUP + TCP SERVER + REVERSE HANDSHAKE
     // =========================================================================
 
     fun startReceiver(
         userProfile: UserProfile,
         onSessionStarted: () -> Unit
     ) {
-        stopReceiver()
-        latestP2pGroupOwnerIp = null
-        registerP2pReceiver()
+        stopReceiver(clearFinishedSession = true)
+        isReceiverActive = true
+        latestReceiverProfile = userProfile
+        latestOnSessionStarted = onSessionStarted
+        incomingTransferLock.set(false)
 
-        val channel = p2pChannel
-        val manager = wifiP2pManager
+        p2pController.ensureReceiverRegistered(
+            onPeersUpdated = null,
+            onConnectionChanged = { snap -> handleP2pConnectionChanged(snap) }
+        )
+
+        // 1. Bind ServerSocket first so we know the exact active port before advertising
+        val server = bindServerSocketPreferringDefault() ?: return
+        serverSocket = server
+        activeListeningPort = server.localPort
+
+        // 2. Start LAN NSD + Multicast UDP Beacons advertising actual bound port
+        lanDiscovery.startAdvertising(
+            profile = userProfile,
+            listeningPort = activeListeningPort,
+            getP2pMac = { p2pController.thisDeviceMac.value },
+            sanitizeField = ::sanitizeWireField
+        )
+
+        // 3. Serialized Wi-Fi Direct Local Service + Group Owner setup
         val safeName = sanitizeWireField(userProfile.name).ifBlank { "Cute Friend" }
         val avatarIdx = CartoonAvatars.avatarIndexOf(userProfile.avatarRes)
-
-        // 1. Create Autonomous Wi-Fi Direct Group so this receiver is Group Owner (192.168.49.1)
-        if (manager != null && channel != null && hasWifiDirectPermission()) {
-            try {
-                manager.clearLocalServices(channel, null)
-                manager.createGroup(channel, object : WifiP2pManager.ActionListener {
-                    override fun onSuccess() {}
-                    override fun onFailure(reason: Int) {}
-                })
-            } catch (_: SecurityException) {
-            } catch (_: Exception) {}
-
-            // 2. Register DNS-SD Local Service advertising CuteShare user name and avatar
-            try {
-                val record = HashMap<String, String>().apply {
-                    put("name", safeName)
-                    put("avatar", userProfile.avatarRes.toString())
-                    put("avatarIdx", avatarIdx.toString())
-                    put("port", TCP_TRANSFER_PORT.toString())
-                }
-                val serviceInfo = WifiP2pDnsSdServiceInfo.newInstance(
-                    "CuteShare_$safeName",
-                    SERVICE_TYPE,
-                    record
-                )
-                dnsSdServiceInfo = serviceInfo
-                manager.addLocalService(channel, serviceInfo, object : WifiP2pManager.ActionListener {
-                    override fun onSuccess() {}
-                    override fun onFailure(arg0: Int) {}
-                })
-            } catch (_: SecurityException) {
-            } catch (_: Exception) {}
+        val txtRecord = hashMapOf(
+            "name" to safeName,
+            "avatar" to userProfile.avatarRes.toString(),
+            "avatarIdx" to avatarIdx.toString(),
+            "port" to activeListeningPort.toString()
+        )
+        NetworkUtils.getWlanLocalIpAddress()?.let { wlanIp ->
+            txtRecord["lanIp"] = wlanIp
         }
 
-        // 3. UDP Presence Beacon: Broadcasts CuteShare user name & avatar every 1.2 seconds
-        receiverBeaconJob = scope.launch(Dispatchers.IO) {
-            var udpSocket: DatagramSocket? = null
-            try {
-                udpSocket = DatagramSocket()
-                udpSocket.broadcast = true
-                while (isActive) {
-                    val myIp = NetworkUtils.getLocalIpAddress()
-                    val payload = "CUTESHARE_BEACON|$safeName|${userProfile.avatarRes}|$TCP_TRANSFER_PORT|$myIp|$avatarIdx"
-                    val bytes = payload.toByteArray(Charsets.UTF_8)
-                    try {
-                        val packet = DatagramPacket(bytes, bytes.size, InetAddress.getByName("255.255.255.255"), UDP_DISCOVERY_PORT)
-                        udpSocket.send(packet)
+        receiverSetupJob = scope.launch(Dispatchers.IO) {
+            p2pController.startReceiverAdvertising(
+                serviceName = "CuteShare_$safeName",
+                serviceType = SERVICE_TYPE,
+                txtRecord = txtRecord
+            )
+            // Check immediately if a connection/group is already active in client role
+            p2pController.connectionSnapshot.value?.let { handleP2pConnectionChanged(it) }
+        }
 
-                        // Also send to Wi-Fi Direct group owner broadcast
-                        val p2pBcast = InetAddress.getByName("192.168.49.255")
-                        val p2pPacket = DatagramPacket(bytes, bytes.size, p2pBcast, UDP_DISCOVERY_PORT)
-                        udpSocket.send(p2pPacket)
-                    } catch (_: Exception) {}
-                    delay(1200L)
+        // 4. Keep-alive loop for OEMs without autonomous GO + reverse connect recovery
+        receiverKeepAliveJob = scope.launch(Dispatchers.IO) {
+            while (isActive && isReceiverActive) {
+                delay(5500L)
+                if (!isReceiverActive || isTransferActive()) continue
+                p2pController.keepReceiverDiscoverableIfNoGroup()
+                val snap = p2pController.queryConnectionSnapshot()
+                if (snap?.info?.groupFormed == true && !snap.info.isGroupOwner) {
+                    val goIp = snap.info.groupOwnerAddress?.hostAddress
+                        ?: NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP
+                    if (reverseConnectJob?.isActive != true) {
+                        launchReverseConnectToGroupOwner(goIp, userProfile, onSessionStarted)
+                    }
                 }
-            } catch (_: Exception) {
-            } finally {
-                try { udpSocket?.close() } catch (_: Exception) {}
             }
         }
 
-        // 4. Bind High-Speed TCP ServerSocket on port 8888
-        try {
-            serverSocket = ServerSocket(TCP_TRANSFER_PORT).apply {
-                reuseAddress = true
-                receiveBufferSize = 524288
-            }
-        } catch (_: Exception) {
-            try {
-                serverSocket = ServerSocket(0).apply {
-                    reuseAddress = true
-                    receiveBufferSize = 524288
-                }
-            } catch (_: Exception) {
-                return
-            }
-        }
-
-        val server = serverSocket ?: return
-
+        // 5. High-Speed TCP ServerSocket Accept Loop
         receiverServerJob = scope.launch(Dispatchers.IO) {
             while (isActive && !server.isClosed) {
                 try {
@@ -663,8 +494,84 @@ class P2PTransferManager(
                         handleIncomingWifiDirectConnection(socket, userProfile, onSessionStarted)
                     }
                 } catch (_: Exception) {
-                    if (!isActive) break
+                    if (!isActive || server.isClosed) break
                 }
+            }
+        }
+    }
+
+    private fun handleP2pConnectionChanged(snapshot: P2pConnectionSnapshot?) {
+        if (!isReceiverActive || isTransferActive()) return
+        val info = snapshot?.info ?: return
+        val profile = latestReceiverProfile ?: return
+        val onStarted = latestOnSessionStarted ?: return
+
+        // If GO role flipped during P2P negotiation, Receiver became Client while Sender became GO.
+        // Connect back to Sender's REVERSE_HANDSHAKE_PORT so data flows cleanly without needing ARP.
+        if (info.groupFormed && !info.isGroupOwner) {
+            val goIp = info.groupOwnerAddress?.hostAddress ?: NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP
+            if (reverseConnectJob?.isActive != true) {
+                launchReverseConnectToGroupOwner(goIp, profile, onStarted)
+            }
+        }
+    }
+
+    private fun launchReverseConnectToGroupOwner(
+        goIp: String,
+        userProfile: UserProfile,
+        onSessionStarted: () -> Unit
+    ) {
+        reverseConnectJob?.cancel()
+        val safeName = sanitizeWireField(userProfile.name).ifBlank { "Cute Friend" }
+        val avatarIdx = CartoonAvatars.avatarIndexOf(userProfile.avatarRes)
+
+        reverseConnectJob = scope.launch(Dispatchers.IO) {
+            while (isActive && isReceiverActive && !isTransferActive()) {
+                val snap = p2pController.connectionSnapshot.value ?: p2pController.queryConnectionSnapshot()
+                if (snap?.info?.groupFormed == true && snap.info.isGroupOwner) break
+
+                val reverseSock = NetworkUtils.connectTcpSocket(
+                    context = context,
+                    host = goIp,
+                    port = REVERSE_HANDSHAKE_PORT,
+                    preferP2p = true,
+                    timeoutMs = 1500
+                )
+                if (reverseSock != null) {
+                    try {
+                        reverseSock.soTimeout = 15_000
+                        val outStream = BufferedOutputStream(reverseSock.getOutputStream(), 65536)
+                        outStream.write(
+                            "CUTESHARE_RECEIVER_READY|$safeName|${userProfile.avatarRes}|$avatarIdx\n"
+                                .toByteArray(Charsets.UTF_8)
+                        )
+                        outStream.flush()
+
+                        handleIncomingWifiDirectConnection(reverseSock, userProfile, onSessionStarted)
+                        break
+                    } catch (_: Exception) {
+                        try { reverseSock.close() } catch (_: Exception) {}
+                    }
+                }
+                delay(550L)
+            }
+        }
+    }
+
+    private fun bindServerSocketPreferringDefault(): ServerSocket? {
+        try {
+            return ServerSocket(TCP_TRANSFER_PORT).apply {
+                reuseAddress = true
+                receiveBufferSize = 524288
+            }
+        } catch (_: Exception) {
+            return try {
+                ServerSocket(0).apply {
+                    reuseAddress = true
+                    receiveBufferSize = 524288
+                }
+            } catch (_: Exception) {
+                null
             }
         }
     }
@@ -674,19 +581,21 @@ class P2PTransferManager(
         userProfile: UserProfile,
         onSessionStarted: () -> Unit
     ) = withContext(Dispatchers.IO) {
+        var claimedTransfer = false
         try {
-            socket.soTimeout = 15000
+            socket.soTimeout = 15_000
             val inStream = BufferedInputStream(socket.getInputStream(), 65536)
             val outStream = BufferedOutputStream(socket.getOutputStream(), 65536)
 
             val firstLine = readAsciiLine(inStream, maxLen = 256)
 
-            // TCP Ping response with CuteShare user name and cute avatar
             if (firstLine.startsWith("CUTESHARE_PING")) {
-                val ip = NetworkUtils.getLocalIpAddress()
+                val ip = NetworkUtils.getWlanLocalIpAddress() ?: NetworkUtils.getLocalIpAddress()
                 val safeName = sanitizeWireField(userProfile.name).ifBlank { "Cute Friend" }
                 val avatarIdx = CartoonAvatars.avatarIndexOf(userProfile.avatarRes)
-                val resp = "CUTESHARE_PONG|$safeName|${userProfile.avatarRes}|$TCP_TRANSFER_PORT|$ip|$avatarIdx\n"
+                val macHint = p2pController.thisDeviceMac.value.orEmpty()
+                val resp =
+                    "CUTESHARE_PONG|$safeName|${userProfile.avatarRes}|$activeListeningPort|$ip|$avatarIdx|$macHint\n"
                 outStream.write(resp.toByteArray(Charsets.UTF_8))
                 outStream.flush()
                 socket.close()
@@ -698,6 +607,11 @@ class P2PTransferManager(
                 return@withContext
             }
 
+            if (!incomingTransferLock.compareAndSet(false, true)) {
+                socket.close()
+                return@withContext
+            }
+            claimedTransfer = true
             activeSocket = socket
 
             // Sender metadata line: senderId|senderName|senderAvatarRes|fileCount|totalBytes|senderAvatarIdx
@@ -718,14 +632,18 @@ class P2PTransferManager(
                     val fId = fParts[0]
                     val fName = fParts[1]
                     val fSize = fParts[2].toLongOrNull() ?: 0L
-                    val fCategory = try { FileCategory.valueOf(fParts[3]) } catch (_: Exception) { FileCategory.DOCUMENTS }
+                    val fCategory = try {
+                        FileCategory.valueOf(fParts[3])
+                    } catch (_: Exception) {
+                        FileCategory.DOCUMENTS
+                    }
 
                     incomingFiles.add(
                         SharedFile(
                             id = fId,
                             name = fName,
                             sizeBytes = fSize,
-                            formattedSize = com.example.model.formatBytes(fSize),
+                            formattedSize = formatBytes(fSize),
                             category = fCategory,
                             extension = fName.substringAfterLast('.', "").uppercase(Locale.ROOT),
                             lastModified = "Wi-Fi Direct"
@@ -758,21 +676,19 @@ class P2PTransferManager(
                 isCompleted = false,
                 currentSpeedBytesPerSec = 0L,
                 remainingSeconds = 0L,
-                wifiBand = "Wi-Fi Direct"
+                wifiBand = "Wi-Fi Direct",
+                statusMessage = null
             )
             _currentSession.value = session
             _incomingRequest.value = null
 
-            // Confirm acceptance
             outStream.write("ACCEPT\n".toByteArray(Charsets.UTF_8))
             outStream.flush()
 
-            // Open TransferScreen on Receiver immediately
             withContext(Dispatchers.Main) {
                 onSessionStarted()
             }
 
-            // Stream actual file bytes directly into Download/Cute Share/
             receiveFilesStream(socket, inStream, outStream, incomingFiles)
         } catch (_: Exception) {
             _currentSession.update { s ->
@@ -781,131 +697,17 @@ class P2PTransferManager(
                         isCancelled = true,
                         currentSpeedBytesPerSec = 0L,
                         remainingSeconds = 0L,
-                        files = s.files.map { f -> if (!f.isFinished) f.copy(status = TransferStatus.CANCELLED) else f }
+                        statusMessage = "Connection closed during transfer",
+                        files = s.files.map { f ->
+                            if (!f.isFinished) f.copy(status = TransferStatus.CANCELLED) else f
+                        }
                     )
                 } else s
             }
             try { socket.close() } catch (_: Exception) {}
-        }
-    }
-
-    private class DownloadDestination(
-        val outputStream: OutputStream,
-        val mediaStoreUri: Uri? = null,
-        val legacyFile: File? = null
-    )
-
-    private fun openDownloadDestination(fileName: String): DownloadDestination? {
-        val safeName = sanitizeDownloadFileName(fileName)
-        val dotIdx = safeName.lastIndexOf('.')
-        val stem = if (dotIdx > 0) safeName.substring(0, dotIdx) else safeName
-        val ext = if (dotIdx in 1 until safeName.length - 1) safeName.substring(dotIdx + 1) else ""
-        val detectedMime = if (ext.isNotEmpty()) {
-            MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase(Locale.ROOT)) ?: "application/octet-stream"
-        } else {
-            "application/octet-stream"
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val collections = listOf(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            ).distinct()
-            val candidateNames = buildList {
-                add(safeName)
-                for (i in 1..5) {
-                    add(if (ext.isNotEmpty()) "$stem ($i).$ext" else "$stem ($i)")
-                }
-                val ts = System.currentTimeMillis()
-                add(if (ext.isNotEmpty()) "${stem}_$ts.$ext" else "${stem}_$ts")
-            }
-            val candidateMimes = listOf(detectedMime, "application/octet-stream").distinct()
-            val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOAD_SUBFOLDER"
-
-            for (collectionUri in collections) {
-                for (candidateName in candidateNames) {
-                    for (mime in candidateMimes) {
-                        var insertedUri: Uri? = null
-                        try {
-                            val values = ContentValues().apply {
-                                put(MediaStore.MediaColumns.DISPLAY_NAME, candidateName)
-                                put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-                                put(MediaStore.MediaColumns.IS_PENDING, 1)
-                            }
-                            insertedUri = context.contentResolver.insert(collectionUri, values)
-                            if (insertedUri != null) {
-                                val os = context.contentResolver.openOutputStream(insertedUri)
-                                if (os != null) {
-                                    return DownloadDestination(outputStream = os, mediaStoreUri = insertedUri)
-                                } else {
-                                    try { context.contentResolver.delete(insertedUri, null, null) } catch (_: Exception) {}
-                                }
-                            }
-                        } catch (_: Exception) {
-                            if (insertedUri != null) {
-                                try { context.contentResolver.delete(insertedUri, null, null) } catch (_: Exception) {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        val canUsePublicDownloadsDirect = Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q ||
-            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager())
-
-        val candidateDirs = buildList {
-            if (canUsePublicDownloadsDirect) {
-                @Suppress("DEPRECATION")
-                val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                add(File(publicDownloads, DOWNLOAD_SUBFOLDER))
-            }
-            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let {
-                add(File(it, DOWNLOAD_SUBFOLDER))
-            }
-            add(File(context.filesDir, DOWNLOAD_SUBFOLDER))
-        }
-
-        for (targetDir in candidateDirs) {
-            try {
-                if (!targetDir.exists()) targetDir.mkdirs()
-                if (!targetDir.exists() || !targetDir.isDirectory) continue
-
-                var destFile = File(targetDir, safeName)
-                var counter = 1
-                while (destFile.exists()) {
-                    val newName = if (ext.isNotEmpty()) "$stem ($counter).$ext" else "$stem ($counter)"
-                    destFile = File(targetDir, newName)
-                    counter++
-                }
-                return DownloadDestination(outputStream = FileOutputStream(destFile), legacyFile = destFile)
-            } catch (_: Exception) {}
-        }
-        return null
-    }
-
-    private fun finalizeDownloadDestination(dest: DownloadDestination, completed: Boolean) {
-        if (dest.mediaStoreUri != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                if (completed) {
-                    val values = ContentValues().apply {
-                        put(MediaStore.MediaColumns.IS_PENDING, 0)
-                    }
-                    context.contentResolver.update(dest.mediaStoreUri, values, null, null)
-                } else {
-                    context.contentResolver.delete(dest.mediaStoreUri, null, null)
-                }
-            } catch (_: Exception) {}
-        } else if (dest.legacyFile != null) {
-            if (completed) {
-                try {
-                    MediaScannerConnection.scanFile(context, arrayOf(dest.legacyFile.absolutePath), null, null)
-                } catch (_: Exception) {}
-            } else {
-                try {
-                    dest.legacyFile.delete()
-                } catch (_: Exception) {}
+        } finally {
+            if (claimedTransfer) {
+                incomingTransferLock.set(false)
             }
         }
     }
@@ -935,14 +737,17 @@ class P2PTransferManager(
         val totalBytes = items.sumOf { it.sizeBytes }
         var completedFilesCount = 0
 
-        fun cancelRemainingItems(failedItemId: String? = null) {
+        fun cancelRemainingItems(failedItemId: String? = null, reason: String? = null) {
             _currentSession.update { s ->
                 s?.copy(
                     isCancelled = true,
                     currentSpeedBytesPerSec = 0L,
                     remainingSeconds = 0L,
+                    statusMessage = reason ?: s.statusMessage,
                     files = s.files.map { f ->
-                        if (f.id == failedItemId || !f.isFinished) f.copy(status = TransferStatus.CANCELLED) else f
+                        if (f.id == failedItemId || !f.isFinished) {
+                            f.copy(status = TransferStatus.CANCELLED)
+                        } else f
                     }
                 )
             }
@@ -960,9 +765,9 @@ class P2PTransferManager(
             val parts = fileHeader.split(":")
             val targetSize = parts.getOrNull(2)?.toLongOrNull() ?: item.sizeBytes
 
-            val dest = openDownloadDestination(item.name)
+            val dest = DownloadStorageHelper.openDownloadDestination(context, item.name)
             if (dest == null) {
-                cancelRemainingItems(item.id)
+                cancelRemainingItems(item.id, "Could not create file in Download/Cute Share")
                 break
             }
 
@@ -976,13 +781,17 @@ class P2PTransferManager(
                 dest.outputStream.use { fileOut ->
                     while (fileBytesReceived < targetSize) {
                         if (_currentSession.value?.isCancelled == true) break
-                        while (_currentSession.value?.isPaused == true && _currentSession.value?.isCancelled != true) {
+                        while (_currentSession.value?.isPaused == true &&
+                            _currentSession.value?.isCancelled != true
+                        ) {
                             delay(200)
                             lastSpeedCheckTime = System.currentTimeMillis()
                         }
                         if (_currentSession.value?.isCancelled == true) break
 
-                        val toRead = (targetSize - fileBytesReceived).coerceAtMost(buffer.size.toLong()).toInt()
+                        val toRead = (targetSize - fileBytesReceived)
+                            .coerceAtMost(buffer.size.toLong())
+                            .toInt()
                         val read = inStream.read(buffer, 0, toRead)
                         if (read == -1) break
 
@@ -994,7 +803,8 @@ class P2PTransferManager(
                         val now = System.currentTimeMillis()
                         val elapsed = now - lastSpeedCheckTime
                         if (elapsed >= 150 || fileBytesReceived >= targetSize) {
-                            val windowElapsed = if (elapsed > 0) elapsed else (now - fileStartTime).coerceAtLeast(1L)
+                            val windowElapsed =
+                                if (elapsed > 0) elapsed else (now - fileStartTime).coerceAtLeast(1L)
                             val windowBytes = if (elapsed > 0) bytesSinceLastCheck else fileBytesReceived
                             val speedBytesSec = (windowBytes * 1000L) / windowElapsed.coerceAtLeast(1L)
                             val remainingBytes = (totalBytes - totalBytesTransferred).coerceAtLeast(0L)
@@ -1015,7 +825,9 @@ class P2PTransferManager(
                                         if (f.id == item.id) {
                                             f.copy(
                                                 transferredBytes = fileBytesReceived,
-                                                progress = if (targetSize > 0) (fileBytesReceived.toFloat() / targetSize).coerceIn(0f, 1f) else 1f
+                                                progress = if (targetSize > 0) {
+                                                    (fileBytesReceived.toFloat() / targetSize).coerceIn(0f, 1f)
+                                                } else 1f
                                             )
                                         } else f
                                     }
@@ -1025,9 +837,14 @@ class P2PTransferManager(
                     }
                     fileOut.flush()
                 }
-                fileCompleted = fileBytesReceived >= targetSize && _currentSession.value?.isCancelled != true
+                fileCompleted =
+                    fileBytesReceived >= targetSize && _currentSession.value?.isCancelled != true
             } finally {
-                finalizeDownloadDestination(dest, completed = fileCompleted)
+                DownloadStorageHelper.finalizeDownloadDestination(
+                    context = context,
+                    dest = dest,
+                    completed = fileCompleted
+                )
             }
 
             if (!fileCompleted) {
@@ -1039,11 +856,13 @@ class P2PTransferManager(
             _currentSession.update { s ->
                 s?.copy(
                     files = s.files.map { f ->
-                        if (f.id == item.id) f.copy(
-                            transferredBytes = fileBytesReceived,
-                            progress = 1f,
-                            status = TransferStatus.COMPLETED
-                        ) else f
+                        if (f.id == item.id) {
+                            f.copy(
+                                transferredBytes = fileBytesReceived,
+                                progress = 1f,
+                                status = TransferStatus.COMPLETED
+                            )
+                        } else f
                     }
                 )
             }
@@ -1057,7 +876,8 @@ class P2PTransferManager(
             val completedSession = current.copy(
                 isCompleted = true,
                 currentSpeedBytesPerSec = 0L,
-                remainingSeconds = 0L
+                remainingSeconds = 0L,
+                statusMessage = null
             )
             _currentSession.value = completedSession
             _transferHistory.update { listOf(completedSession) + it }
@@ -1072,31 +892,42 @@ class P2PTransferManager(
         try { socket.close() } catch (_: Exception) {}
     }
 
-    fun stopReceiver() {
+    fun stopReceiver(clearFinishedSession: Boolean = false) {
+        isReceiverActive = false
+        receiverSetupJob?.cancel()
+        receiverSetupJob = null
+        receiverKeepAliveJob?.cancel()
+        receiverKeepAliveJob = null
+        reverseConnectJob?.cancel()
+        reverseConnectJob = null
         receiverServerJob?.cancel()
         receiverServerJob = null
+        incomingTransferLock.set(false)
 
-        receiverBeaconJob?.cancel()
-        receiverBeaconJob = null
-
-        val channel = p2pChannel
-        val manager = wifiP2pManager
-        if (manager != null && channel != null) {
-            try {
-                manager.removeGroup(channel, null)
-                dnsSdServiceInfo?.let { manager.removeLocalService(channel, it, null) }
-                dnsSdServiceInfo = null
-            } catch (_: Exception) {}
-        }
+        lanDiscovery.stopAdvertising()
 
         try { serverSocket?.close() } catch (_: Exception) {}
         serverSocket = null
 
-        unregisterP2pReceiver()
+        scope.launch(Dispatchers.IO) {
+            p2pController.stopReceiverAdvertising()
+        }
+
+        if (!isDiscoveryActive) {
+            lanDiscovery.releaseMulticastLock()
+            p2pController.unregisterReceiver()
+        }
+
+        if (clearFinishedSession) {
+            val cur = _currentSession.value
+            if (cur != null && (cur.isCompleted || cur.isCancelled)) {
+                _currentSession.value = null
+            }
+        }
     }
 
     // =========================================================================
-    // WI-FI DIRECT SENDER: REAL P2P TCP BYTE STREAMING
+    // SENDER: SERIALIZED P2P CONNECTION + LAN/NSD + DUAL-ROLE TCP TRANSFER
     // =========================================================================
 
     fun startOutgoingTransfer(
@@ -1106,7 +937,26 @@ class P2PTransferManager(
     ) {
         activeTransferJob?.cancel()
 
-        val items = files.map { file ->
+        // Halt active discovery scanning cleanly WITHOUT unregistering wifiP2pReceiver
+        val cachedTargetMac = resolveTargetMac(targetPeer)
+        stopDiscovery(keepP2pReceiver = true)
+        p2pController.ensureReceiverRegistered(
+            onPeersUpdated = null,
+            onConnectionChanged = { snap ->
+                if (snap?.info?.groupFormed == true) {
+                    updateSessionBand(
+                        if (NetworkUtils.findP2pNetwork(context) != null) "Wi-Fi Direct" else "Wi-Fi Direct"
+                    )
+                }
+            }
+        )
+
+        val resolvedFiles = files.map { file ->
+            val exactSize = resolveAccurateFileSize(file)
+            if (exactSize != file.sizeBytes) file.copy(sizeBytes = exactSize) else file
+        }
+
+        val items = resolvedFiles.map { file ->
             TransferFileItem(
                 id = file.id,
                 name = file.name,
@@ -1129,115 +979,211 @@ class P2PTransferManager(
             isCompleted = false,
             currentSpeedBytesPerSec = 0L,
             remainingSeconds = 0L,
-            wifiBand = "Wi-Fi Direct"
+            wifiBand = "Wi-Fi Direct",
+            statusMessage = "Connecting to ${targetPeer.name}..."
         )
         _currentSession.value = session
 
-        val channel = p2pChannel
-        val manager = wifiP2pManager
-        val targetMac = targetPeer.p2pMacAddress ?: targetPeer.id.takeIf { it.contains(":") }
-
         activeTransferJob = scope.launch(Dispatchers.IO) {
             var socket: Socket? = null
+            var reverseServer: ServerSocket? = null
             try {
-                // Fast-path: if peer already has a direct LAN/Wi-Fi IP, try immediate socket connect first
-                val hasLanIp = targetPeer.ip.isNotEmpty() &&
+                // 1. Fast direct LAN path when devices share a Wi-Fi network or hotspot
+                val hasLanIp = targetPeer.ip.isNotBlank() &&
                     !targetPeer.ip.startsWith("127.") &&
                     targetPeer.ip != NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP
-                var connected = false
 
                 if (hasLanIp) {
-                    try {
-                        val directSocket = Socket()
-                        directSocket.tcpNoDelay = true
-                        directSocket.sendBufferSize = 524288
-                        directSocket.receiveBufferSize = 524288
-                        directSocket.connect(InetSocketAddress(targetPeer.ip, targetPeer.port), 600)
-                        socket = directSocket
-                        connected = true
-                    } catch (_: Exception) {}
-                }
-
-                // Offline / P2P path: connect via Wi-Fi Direct group if not already connected over LAN
-                if (!connected && manager != null && channel != null && targetMac != null && hasWifiDirectPermission()) {
-                    val config = WifiP2pConfig().apply {
-                        deviceAddress = targetMac
-                        groupOwnerIntent = 0 // Receiver is Group Owner
-                    }
-                    try {
-                        manager.connect(channel, config, null)
-                    } catch (_: SecurityException) {
-                    } catch (_: Exception) {}
-                }
-
-                var attempts = 0
-                val maxAttempts = 28 // Up to ~18 seconds for Wi-Fi Direct group formation & DHCP
-
-                while (!connected && attempts < maxAttempts && isActive && _currentSession.value?.isCancelled != true) {
-                    attempts++
-                    val candidateHosts = mutableListOf<String>()
-                    latestP2pGroupOwnerIp?.takeIf { it.isNotEmpty() }?.let { candidateHosts.add(it) }
-                    if (targetPeer.ip.isNotEmpty() && !targetPeer.ip.startsWith("127.")) {
-                        candidateHosts.add(targetPeer.ip)
-                    }
-                    candidateHosts.add(NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP)
-                    candidateHosts.add("192.168.43.1")
-
-                    for (host in candidateHosts.distinct()) {
-                        try {
-                            val testSocket = Socket()
-                            testSocket.tcpNoDelay = true
-                            testSocket.sendBufferSize = 524288
-                            testSocket.receiveBufferSize = 524288
-                            testSocket.connect(InetSocketAddress(host, targetPeer.port), 800)
-                            socket = testSocket
-                            connected = true
-                            break
-                        } catch (_: Exception) {}
-                    }
-                    if (!connected) {
-                        delay(500L)
+                    updateSessionStatus("Connecting over Wi-Fi LAN...")
+                    socket = NetworkUtils.connectTcpSocket(
+                        context = context,
+                        host = targetPeer.ip,
+                        port = targetPeer.port,
+                        preferP2p = false,
+                        timeoutMs = 1300
+                    )
+                    if (socket != null) {
+                        updateSessionBand("Wi-Fi LAN")
                     }
                 }
 
-                if (!connected || socket == null) {
-                    // Mark cancelled/failed, NEVER fake completion
+                // 2. Pure offline / AP-isolated Wi-Fi Direct connection path
+                if (socket == null && cachedTargetMac != null &&
+                    p2pController.hasWifiDirectPermission() && p2pController.isAvailable()
+                ) {
+                    val initiated = p2pController.initiatePeerConnection(cachedTargetMac) { status ->
+                        updateSessionStatus(status)
+                    }
+                    if (!initiated) {
+                        updateSessionStatus("Establishing Wi-Fi Direct group...")
+                    }
+
+                    // Open reverse-handshake server on 8890 immediately so if Sender wins GO,
+                    // Receiver can connect back right away without waiting for polling cycle.
+                    reverseServer = try {
+                        ServerSocket(REVERSE_HANDSHAKE_PORT).apply {
+                            reuseAddress = true
+                            soTimeout = 550
+                            receiveBufferSize = 524288
+                        }
+                    } catch (_: Exception) {
+                        null
+                    }
+
+                    val deadline = System.currentTimeMillis() + 35_000L
+                    var cycle = 0
+                    var retriedConnect = false
+
+                    while (socket == null &&
+                        System.currentTimeMillis() < deadline &&
+                        isActive &&
+                        _currentSession.value?.isCancelled != true
+                    ) {
+                        cycle++
+                        val remainingMs = deadline - System.currentTimeMillis()
+                        if (!retriedConnect && remainingMs < 20_000L &&
+                            p2pController.connectionSnapshot.value?.info?.groupFormed != true
+                        ) {
+                            retriedConnect = true
+                            updateSessionStatus("Waiting for Wi-Fi Direct approval on ${targetPeer.name}...")
+                            p2pController.initiatePeerConnection(cachedTargetMac) {}
+                        } else if (cycle == 4 &&
+                            p2pController.connectionSnapshot.value?.info?.groupFormed != true
+                        ) {
+                            updateSessionStatus("Accept Wi-Fi Direct prompt on ${targetPeer.name} if shown...")
+                        }
+
+                        val snap = p2pController.connectionSnapshot.value
+                            ?: p2pController.queryConnectionSnapshot()
+
+                        if (snap != null && snap.info.groupFormed) {
+                            if (!snap.info.isGroupOwner) {
+                                // Normal P2P topology: Receiver is Group Owner
+                                updateSessionStatus("Connecting via Wi-Fi Direct link...")
+                                val goHost = snap.info.groupOwnerAddress?.hostAddress
+                                val hosts = listOfNotNull(
+                                    goHost,
+                                    NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP,
+                                    targetPeer.ip.takeIf { it.isNotBlank() && !it.startsWith("127.") }
+                                ).distinct()
+                                val ports = listOf(targetPeer.port, TCP_TRANSFER_PORT).distinct()
+                                for (host in hosts) {
+                                    for (port in ports) {
+                                        val s = NetworkUtils.connectTcpSocket(
+                                            context = context,
+                                            host = host,
+                                            port = port,
+                                            preferP2p = NetworkUtils.isP2pSubnetIp(host),
+                                            timeoutMs = 1100
+                                        )
+                                        if (s != null) {
+                                            socket = s
+                                            break
+                                        }
+                                    }
+                                    if (socket != null) break
+                                }
+                            } else {
+                                // Flipped P2P topology: Sender became GO (`192.168.49.1`)!
+                                // Wait for Receiver client's reverse TCP connection on REVERSE_HANDSHAKE_PORT
+                                updateSessionStatus("Opening P2P reverse channel...")
+                                val srv = reverseServer
+                                if (srv != null) {
+                                    try {
+                                        val candidate = srv.accept()
+                                        candidate.tcpNoDelay = true
+                                        candidate.sendBufferSize = 524288
+                                        candidate.receiveBufferSize = 524288
+                                        candidate.soTimeout = 4000
+                                        val readyLine = readAsciiLine(candidate.getInputStream(), maxLen = 256)
+                                        if (readyLine.startsWith("CUTESHARE_RECEIVER_READY")) {
+                                            socket = candidate
+                                        } else {
+                                            try { candidate.close() } catch (_: Exception) {}
+                                        }
+                                    } catch (_: Exception) {
+                                        // Accept timeout (550ms), loop naturally
+                                    }
+                                }
+                            }
+                        }
+
+                        // Secondary LAN check every few cycles if LAN link wasn't ready at t=0
+                        if (socket == null && hasLanIp && cycle % 3 == 0) {
+                            socket = NetworkUtils.connectTcpSocket(
+                                context = context,
+                                host = targetPeer.ip,
+                                port = targetPeer.port,
+                                preferP2p = false,
+                                timeoutMs = 800
+                            )
+                            if (socket != null) {
+                                updateSessionBand("Wi-Fi LAN")
+                            }
+                        }
+
+                        if (socket == null && snap?.info?.isGroupOwner != true) {
+                            delay(500L)
+                        }
+                    }
+                } else if (socket == null) {
+                    // Peer lacks P2P MAC and LAN failed on first try -> retry LAN / GO IP briefly
+                    val retryHosts = listOfNotNull(
+                        targetPeer.ip.takeIf { it.isNotBlank() && !it.startsWith("127.") },
+                        NetworkUtils.WIFI_DIRECT_GROUP_OWNER_IP
+                    ).distinct()
+                    for (attempt in 1..6) {
+                        if (!isActive || _currentSession.value?.isCancelled == true || socket != null) break
+                        for (host in retryHosts) {
+                            socket = NetworkUtils.connectTcpSocket(
+                                context = context,
+                                host = host,
+                                port = targetPeer.port,
+                                preferP2p = NetworkUtils.isP2pSubnetIp(host),
+                                timeoutMs = 900
+                            )
+                            if (socket != null) break
+                        }
+                        if (socket == null) delay(500L)
+                    }
+                }
+
+                try { reverseServer?.close() } catch (_: Exception) {}
+                reverseServer = null
+
+                val connectedSocket = socket
+                if (connectedSocket == null || _currentSession.value?.isCancelled == true) {
                     _currentSession.update {
                         it?.copy(
                             isCancelled = true,
                             currentSpeedBytesPerSec = 0L,
                             remainingSeconds = 0L,
+                            statusMessage = if (cachedTargetMac == null && !hasLanIp) {
+                                "No peer route found. Ensure Wi-Fi & Location are on."
+                            } else {
+                                "Could not connect to ${targetPeer.name}. Ensure Receive is open on peer and tap Retry."
+                            },
                             files = it.files.map { f -> f.copy(status = TransferStatus.CANCELLED) }
                         )
                     }
                     return@launch
                 }
 
-                activeSocket = socket
-                val outStream = BufferedOutputStream(socket.getOutputStream(), 65536)
-                val inStream = BufferedInputStream(socket.getInputStream(), 65536)
+                activeSocket = connectedSocket
+                connectedSocket.soTimeout = 20_000
+                updateSessionStatus("Sending file offer to ${targetPeer.name}...")
 
-                // Normalize exact file sizes before building wire manifest
-                val resolvedFiles = files.map { file ->
-                    val exactSize = resolveAccurateFileSize(file)
-                    if (exactSize != file.sizeBytes) file.copy(sizeBytes = exactSize) else file
-                }
-                _currentSession.update { s ->
-                    s?.copy(
-                        files = s.files.map { item ->
-                            val updatedSize = resolvedFiles.find { it.id == item.id }?.sizeBytes ?: item.sizeBytes
-                            item.copy(sizeBytes = updatedSize)
-                        }
-                    )
-                }
+                val outStream = BufferedOutputStream(connectedSocket.getOutputStream(), 65536)
+                val inStream = BufferedInputStream(connectedSocket.getInputStream(), 65536)
 
-                // Transmit Header: protocol, sender profile, file manifest
                 val safeSenderName = sanitizeWireField(senderProfile.name).ifBlank { "Cute Friend" }
                 val senderAvatarIdx = CartoonAvatars.avatarIndexOf(senderProfile.avatarRes)
                 val header = StringBuilder()
                 header.append("CUTESHARE_WIFIDIRECT_v1\n")
                 val totalBytes = resolvedFiles.sumOf { it.sizeBytes }
-                header.append("${UUID.randomUUID().toString().take(8)}|$safeSenderName|${senderProfile.avatarRes}|${resolvedFiles.size}|$totalBytes|$senderAvatarIdx\n")
+                header.append(
+                    "${UUID.randomUUID().toString().take(8)}|$safeSenderName|${senderProfile.avatarRes}|${resolvedFiles.size}|$totalBytes|$senderAvatarIdx\n"
+                )
                 for (file in resolvedFiles) {
                     val safeFileName = sanitizeWireField(file.name).ifBlank { "file_${file.id.take(6)}" }
                     header.append("${file.id}|$safeFileName|${file.sizeBytes}|${file.category.name}\n")
@@ -1253,11 +1199,17 @@ class P2PTransferManager(
                         it?.copy(
                             isCancelled = true,
                             currentSpeedBytesPerSec = 0L,
+                            remainingSeconds = 0L,
+                            statusMessage = "Transfer declined by ${targetPeer.name}",
                             files = it.files.map { f -> f.copy(status = TransferStatus.CANCELLED) }
                         )
                     }
                     return@launch
                 }
+
+                // Clear connecting banner once real byte transfer begins
+                updateSessionStatus(null)
+                connectedSocket.soTimeout = 45_000
 
                 val buffer = ByteArray(65536)
                 var totalBytesSent = 0L
@@ -1280,13 +1232,17 @@ class P2PTransferManager(
                     fileInputStream.use { input ->
                         while (fileBytesSent < file.sizeBytes) {
                             if (_currentSession.value?.isCancelled == true) break
-                            while (_currentSession.value?.isPaused == true && _currentSession.value?.isCancelled != true) {
+                            while (_currentSession.value?.isPaused == true &&
+                                _currentSession.value?.isCancelled != true
+                            ) {
                                 delay(200)
                                 lastSpeedCheck = System.currentTimeMillis()
                             }
                             if (_currentSession.value?.isCancelled == true) break
 
-                            val toRead = (file.sizeBytes - fileBytesSent).coerceAtMost(buffer.size.toLong()).toInt()
+                            val toRead = (file.sizeBytes - fileBytesSent)
+                                .coerceAtMost(buffer.size.toLong())
+                                .toInt()
                             val read = input.read(buffer, 0, toRead)
                             if (read == -1) break
 
@@ -1298,7 +1254,8 @@ class P2PTransferManager(
                             val now = System.currentTimeMillis()
                             val elapsed = now - lastSpeedCheck
                             if (elapsed >= 150 || fileBytesSent >= file.sizeBytes) {
-                                val windowElapsed = if (elapsed > 0) elapsed else (now - fileStartTime).coerceAtLeast(1L)
+                                val windowElapsed =
+                                    if (elapsed > 0) elapsed else (now - fileStartTime).coerceAtLeast(1L)
                                 val windowBytes = if (elapsed > 0) bytesSinceLastCheck else fileBytesSent
                                 val speed = (windowBytes * 1000L) / windowElapsed.coerceAtLeast(1L)
                                 val remaining = (totalBytes - totalBytesSent).coerceAtLeast(0L)
@@ -1319,7 +1276,9 @@ class P2PTransferManager(
                                             if (f.id == file.id) {
                                                 f.copy(
                                                     transferredBytes = fileBytesSent,
-                                                    progress = if (file.sizeBytes > 0) (fileBytesSent.toFloat() / file.sizeBytes).coerceIn(0f, 1f) else 1f
+                                                    progress = if (file.sizeBytes > 0) {
+                                                        (fileBytesSent.toFloat() / file.sizeBytes).coerceIn(0f, 1f)
+                                                    } else 1f
                                                 )
                                             } else f
                                         }
@@ -1343,11 +1302,13 @@ class P2PTransferManager(
                     _currentSession.update { s ->
                         s?.copy(
                             files = s.files.map { f ->
-                                if (f.id == file.id) f.copy(
-                                    transferredBytes = fileBytesSent,
-                                    progress = 1f,
-                                    status = TransferStatus.COMPLETED
-                                ) else f
+                                if (f.id == file.id) {
+                                    f.copy(
+                                        transferredBytes = fileBytesSent,
+                                        progress = 1f,
+                                        status = TransferStatus.COMPLETED
+                                    )
+                                } else f
                             }
                         )
                     }
@@ -1358,7 +1319,8 @@ class P2PTransferManager(
                     val completedSession = current.copy(
                         isCompleted = true,
                         currentSpeedBytesPerSec = 0L,
-                        remainingSeconds = 0L
+                        remainingSeconds = 0L,
+                        statusMessage = null
                     )
                     _currentSession.value = completedSession
                     _transferHistory.update { listOf(completedSession) + it }
@@ -1368,20 +1330,44 @@ class P2PTransferManager(
                         remainingSeconds = 0L
                     )
                 }
-
-            } catch (_: Exception) {
-                // If real transfer fails, mark as cancelled, do NOT fake completion
+            } catch (e: Exception) {
                 _currentSession.update {
                     it?.copy(
                         isCancelled = true,
                         currentSpeedBytesPerSec = 0L,
-                        files = it.files.map { f -> f.copy(status = TransferStatus.CANCELLED) }
+                        remainingSeconds = 0L,
+                        statusMessage = e.message?.take(80)
+                            ?: "Connection interrupted during transfer",
+                        files = it.files.map { f ->
+                            if (!f.isFinished) f.copy(status = TransferStatus.CANCELLED) else f
+                        }
                     )
                 }
             } finally {
+                try { reverseServer?.close() } catch (_: Exception) {}
                 try { socket?.close() } catch (_: Exception) {}
+                if (activeSocket === socket) activeSocket = null
+                if (!isReceiverActive && !isDiscoveryActive) {
+                    p2pController.unregisterReceiver()
+                }
             }
         }
+    }
+
+    private fun resolveTargetMac(peer: DiscoveredDevice): String? {
+        peer.p2pMacAddress?.takeIf { it.contains(":") }?.let { return it }
+        peer.id.takeIf { it.contains(":") }?.let { return it }
+        return macToCuteProfileMap.entries.firstOrNull { (_, meta) ->
+            meta.name.equals(peer.name, ignoreCase = true) && meta.avatarRes == peer.avatarRes
+        }?.key
+    }
+
+    private fun updateSessionStatus(message: String?) {
+        _currentSession.update { it?.copy(statusMessage = message) }
+    }
+
+    private fun updateSessionBand(band: String) {
+        _currentSession.update { it?.copy(wifiBand = band) }
     }
 
     fun addFilesToActiveSession(newFiles: List<SharedFile>) {
@@ -1412,8 +1398,9 @@ class P2PTransferManager(
             if (session == null) return@update null
             val newPaused = !session.isPaused
             val updated = session.files.map { item ->
-                if (!item.isFinished) item.copy(status = if (newPaused) TransferStatus.PAUSED else TransferStatus.TRANSFERRING)
-                else item
+                if (!item.isFinished) {
+                    item.copy(status = if (newPaused) TransferStatus.PAUSED else TransferStatus.TRANSFERRING)
+                } else item
             }
             session.copy(isPaused = newPaused, files = updated)
         }
@@ -1424,8 +1411,16 @@ class P2PTransferManager(
         try { activeSocket?.close() } catch (_: Exception) {}
         _currentSession.update { session ->
             if (session == null) return@update null
-            val updated = session.files.map { if (!it.isFinished) it.copy(status = TransferStatus.CANCELLED) else it }
-            session.copy(isCancelled = true, files = updated, currentSpeedBytesPerSec = 0L, remainingSeconds = 0L)
+            val updated = session.files.map {
+                if (!it.isFinished) it.copy(status = TransferStatus.CANCELLED) else it
+            }
+            session.copy(
+                isCancelled = true,
+                files = updated,
+                currentSpeedBytesPerSec = 0L,
+                remainingSeconds = 0L,
+                statusMessage = "Transfer cancelled"
+            )
         }
     }
 
@@ -1463,10 +1458,21 @@ class P2PTransferManager(
 
     fun clearSession() {
         val s = _currentSession.value
-        if (s != null) {
-            _transferHistory.update { listOf(s) + it }
+        if (s != null && (s.isCompleted || s.isCancelled)) {
+            _transferHistory.update { list ->
+                if (list.any { it.id == s.id }) list else listOf(s) + list
+            }
         }
         _currentSession.value = null
+    }
+
+    fun cleanupAfterFinishedTransfer() {
+        if (!isTransferActive()) {
+            stopReceiver(clearFinishedSession = true)
+            scope.launch(Dispatchers.IO) {
+                p2pController.removeGroupIfAny()
+            }
+        }
     }
 
     fun addManualPeer(ip: String, port: Int = TCP_TRANSFER_PORT) {
@@ -1481,10 +1487,10 @@ class P2PTransferManager(
             port = port,
             supports5Ghz = true,
             is5GhzActive = true,
-            lastSeenTimestamp = System.currentTimeMillis() + 120000L
+            lastSeenTimestamp = System.currentTimeMillis() + 120_000L
         )
         discoveredDevicesMap[id] = peer
-        _discoveredPeers.value = discoveredDevicesMap.values.toList()
+        publishDiscoveredPeers()
     }
 
     fun isTransferActive(): Boolean {
@@ -1508,6 +1514,8 @@ class P2PTransferManager(
         activeTransferJob = null
         try { activeSocket?.close() } catch (_: Exception) {}
         activeSocket = null
+        p2pController.unregisterReceiver()
+        lanDiscovery.releaseMulticastLock()
     }
 
     private fun resolveAccurateFileSize(file: SharedFile): Long {
@@ -1548,7 +1556,6 @@ class P2PTransferManager(
             if (stream != null) return stream
         } catch (_: Exception) {}
 
-        // MediaStore lookup fallback when filesystem path is scoped-storage restricted on Android 11+
         try {
             val collection = MediaStore.Files.getContentUri("external")
             val projection = arrayOf(MediaStore.MediaColumns._ID)
@@ -1557,7 +1564,7 @@ class P2PTransferManager(
             context.contentResolver.query(collection, projection, selection, args, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
-                    val resolvedUri = android.content.ContentUris.withAppendedId(collection, id)
+                    val resolvedUri = ContentUris.withAppendedId(collection, id)
                     return context.contentResolver.openInputStream(resolvedUri)
                 }
             }

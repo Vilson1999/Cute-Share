@@ -20,9 +20,17 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
--repackageclasses 'o'
+# Optimize passes and code shrinking
+-optimizationpasses 5
 -allowaccessmodification
+-repackageclasses 'o'
 
+# Strip source file, line number table, and unused metadata
+-dontusemixedcaseclassnames
+-renamesourcefileattribute ""
+-keepattributes !SourceFile,!LineNumberTable,!EnclosingMethod,!InnerClasses,!Signature,!Deprecated,!AnnotationDefault,!RuntimeVisibleAnnotations,!RuntimeInvisibleAnnotations
+
+# Strip logging calls across release and debug
 -assumenosideeffects class android.util.Log {
     public static boolean isLoggable(java.lang.String, int);
     public static int v(...);
@@ -30,3 +38,7 @@
     public static int w(...);
     public static int d(...);
 }
+
+# Keep our models and data classes safe from unintended reflection/obfuscation breakages
+-keepclassmembers class com.example.model.** { *; }
+-keepclassmembers class com.example.data.** { *; }

@@ -94,7 +94,10 @@ android {
         "/META-INF/CHANGES",
         "/META-INF/README*",
         "DebugProbesKt.bin",
-        "kotlin-tooling-metadata.json"
+        "kotlin-tooling-metadata.json",
+        "**/*.kotlin_metadata",
+        "**/*.kotlin_builtins",
+        "META-INF/*.kotlin_module"
       )
     }
   }

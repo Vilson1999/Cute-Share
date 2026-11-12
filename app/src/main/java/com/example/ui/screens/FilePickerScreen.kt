@@ -671,12 +671,21 @@ private fun AudioVideoListItem(
                 .clip(RoundedCornerShape(12.dp))
                 .background(file.category.containerColor)
         ) {
-            Icon(
-                imageVector = if (file.category == FileCategory.VIDEO) Icons.Rounded.PlayArrow else file.category.icon,
-                contentDescription = file.category.title,
-                tint = file.category.contentColor,
-                modifier = Modifier.size(24.dp)
-            )
+            if (file.category == FileCategory.APP || file.extension == "APK" || file.isDownloadedApk) {
+                AsyncAppIconThumbnail(
+                    file = file,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                )
+            } else {
+                Icon(
+                    imageVector = if (file.category == FileCategory.VIDEO) Icons.Rounded.PlayArrow else file.category.icon,
+                    contentDescription = file.category.title,
+                    tint = file.category.contentColor,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
 
         Spacer(modifier = Modifier.width(14.dp))

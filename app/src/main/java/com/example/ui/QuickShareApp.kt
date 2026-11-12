@@ -157,7 +157,8 @@ fun QuickShareApp(
                         onCancelSession = { viewModel.cancelSession() },
                         onToggleFilePause = { id -> viewModel.toggleFilePause(id) },
                         onCancelFile = { id -> viewModel.cancelFile(id) },
-                        onShareMoreClick = { viewModel.openInbuildFileManagerForAddingMore() }
+                        onShareMoreClick = { viewModel.openInbuildFileManagerForAddingMore() },
+                        onRetryTransfer = { viewModel.retryOutgoingTransfer() }
                     )
                 }
             }

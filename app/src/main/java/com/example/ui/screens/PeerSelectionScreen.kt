@@ -251,34 +251,74 @@ fun PeerSelectionScreen(
         }
 
         // SCANNING STATUS / PEERS FOUND BADGE: 24% BELOW OF CENTER OF THE SCREEN
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .align(Alignment.Center)
                 .offset(y = maxHeight * 0.24f)
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
-                .border(
-                    width = 1.dp,
-                    color = if (discoveredPeers.isEmpty()) MaterialTheme.colorScheme.outline.copy(alpha = 0.25f) else Color(0xFF10B981).copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(14.dp)
-                )
-                .padding(horizontal = 16.dp, vertical = 8.dp)
                 .zIndex(5f)
         ) {
-            Box(
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(if (discoveredPeers.isEmpty()) Color(0xFF00E5FF) else Color(0xFF10B981))
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = if (discoveredPeers.isEmpty()) "Scanning for nearby devices..." else "${discoveredPeers.size} nearby device ready • Tap photo to send",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
+                    .border(
+                        width = 1.dp,
+                        color = if (discoveredPeers.isEmpty()) MaterialTheme.colorScheme.outline.copy(alpha = 0.25f) else Color(0xFF10B981).copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (discoveredPeers.isEmpty()) Color(0xFF00E5FF) else Color(0xFF10B981))
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (discoveredPeers.isEmpty()) "Searching for receiver..." else "${discoveredPeers.size} nearby device ready • Tap photo to send",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            if (discoveredPeers.isEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF00E5FF).copy(alpha = 0.15f))
+                            .border(1.dp, Color(0xFF00E5FF).copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                            .clickable { onRescan() }
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                            .testTag("rescan_peers_button")
+                    ) {
+                        Text(
+                            text = "Tap to Rescan",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF00E5FF)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Make sure 2nd device has Cute Share open on Receive screen with Wi-Fi & Location ON",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                    modifier = Modifier.padding(horizontal = 32.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
         }
 
         // REAL DISCOVERED PEERS ORBITING AROUND SENDER RADAR (Always clickable & active)

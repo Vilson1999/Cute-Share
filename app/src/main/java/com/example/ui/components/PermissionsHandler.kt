@@ -3,6 +3,7 @@ package com.example.ui.components
 import android.Manifest
 import android.content.Context
 import android.os.Build
+import com.example.data.HardwareReadinessManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -48,53 +49,67 @@ fun PermissionsHandler(
 ) {
     val context = LocalContext.current
     val permissionsToRequest = buildList {
-        // 1. Storage & Media permissions
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            add(Manifest.permission.READ_MEDIA_IMAGES)
-            add(Manifest.permission.READ_MEDIA_VIDEO)
-            add(Manifest.permission.READ_MEDIA_AUDIO)
-            add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(Manifest.permission.READ_MEDIA_IMAGES)
-            add(Manifest.permission.READ_MEDIA_VIDEO)
-            add(Manifest.permission.READ_MEDIA_AUDIO)
-        } else {
-            add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+        // --- 1. MEDIA & STORAGE PERMISSIONS (Strictly stratified by Android OS version) ---
+        when {
+            // Android 14+ (API 34+): Fine-grained media + partial user selected
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
+                add(Manifest.permission.READ_MEDIA_IMAGES)
+                add(Manifest.permission.READ_MEDIA_VIDEO)
+                add(Manifest.permission.READ_MEDIA_AUDIO)
+                add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+            }
+            // Android 13 (API 33, Tiramisu): Granular media permissions
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
+                add(Manifest.permission.READ_MEDIA_IMAGES)
+                add(Manifest.permission.READ_MEDIA_VIDEO)
+                add(Manifest.permission.READ_MEDIA_AUDIO)
+            }
+            // Android 11 & 12 (API 30–32): Standard scoped external storage read
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            // Android 9 & 10 (API 28–29): Legacy storage write + read
+            else -> {
+                add(Manifest.permission.READ_EXTERNAL_STORAGE)
                 add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
         }
 
-        // 2. Nearby Devices permission (Android 13+ / API 33+)
+        // --- 2. WI-FI DIRECT & NEARBY DEVICES PERMISSIONS ---
+        // Android 13+ (API 33+): Mandatory NEARBY_WIFI_DEVICES for Wi-Fi Direct peer discovery & group operations
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
 
-        // 3. Bluetooth permissions
+        // --- 3. BLUETOOTH PERMISSIONS ---
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Android 12+ (API 31+): Runtime scan, connect, advertise
             add(Manifest.permission.BLUETOOTH_SCAN)
             add(Manifest.permission.BLUETOOTH_CONNECT)
             add(Manifest.permission.BLUETOOTH_ADVERTISE)
         } else {
+            // Android 9, 10, 11: Normal install-time bluetooth permissions
             add(Manifest.permission.BLUETOOTH)
             add(Manifest.permission.BLUETOOTH_ADMIN)
         }
 
-        // 4. Location (Required by Android OS for Wi-Fi Direct and Hotspot P2P)
+        // --- 4. LOCATION (MANDATORY on Android 9, 10, 11, 12 for Wi-Fi Direct and scan) ---
+        // Also required on Android 13+ whenever scanning without neverForLocation flags or on diverse OEM radios
         add(Manifest.permission.ACCESS_FINE_LOCATION)
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
-    }.toTypedArray()
+    }.distinct().toTypedArray()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        // Mark that permissions have been asked once
+        // Store that permissions dialog was processed
         context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE).edit {
             putBoolean("has_asked_permissions", true)
         }
 
-        val anyGranted = results.values.any { it }
-        onPermissionsResult(anyGranted)
+        val allCoreGranted = HardwareReadinessManager.hasNearbyWifiPermission(context) &&
+            HardwareReadinessManager.hasLocationPermission(context)
+        onPermissionsResult(allCoreGranted)
         onDismiss()
     }
 

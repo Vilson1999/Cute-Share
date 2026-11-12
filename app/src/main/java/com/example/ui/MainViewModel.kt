@@ -73,6 +73,8 @@ class MainViewModel : ViewModel() {
     private val _isAddingMoreToActiveSession = MutableStateFlow(false)
     val isAddingMoreToActiveSession: StateFlow<Boolean> = _isAddingMoreToActiveSession.asStateFlow()
 
+    private var lastSelectedPeer: DiscoveredDevice? = null
+
     init {
         // Collect from local transfer manager for testing and fallback
         viewModelScope.launch {
@@ -104,10 +106,12 @@ class MainViewModel : ViewModel() {
             manager.currentSession.collect { session ->
                 if (session != null) {
                     _activeSession.value = session
-                    // Automatically transition both receiver and sender to TRANSFER screen when session begins
+                    // Automatically transition receiver/sender to TRANSFER screen when active session begins
                     if (_currentScreen.value == Screen.RECEIVE_RADAR || _currentScreen.value == Screen.PEER_SELECTION) {
                         _currentScreen.value = Screen.TRANSFER
                     }
+                } else if (localTransferManager.currentSession.value == null) {
+                    _activeSession.value = null
                 }
             }
         }
@@ -237,12 +241,15 @@ class MainViewModel : ViewModel() {
             p2pTransferManager?.stopReceiver()
         }
         if (from == Screen.TRANSFER && to != Screen.TRANSFER && to != Screen.FILE_PICKER && !isTransferActive()) {
-            p2pTransferManager?.stopReceiver()
+            p2pTransferManager?.cleanupAfterFinishedTransfer()
         }
-        if (from == Screen.PEER_SELECTION && to != Screen.PEER_SELECTION) {
+        if (from == Screen.PEER_SELECTION && to != Screen.PEER_SELECTION && to != Screen.TRANSFER) {
             p2pTransferManager?.stopDiscovery()
         }
         if (to == Screen.RECEIVE_RADAR) {
+            if (!isTransferActive()) {
+                p2pTransferManager?.clearSession()
+            }
             startReceiverMode()
         }
         if (to == Screen.PEER_SELECTION) {
@@ -307,12 +314,12 @@ class MainViewModel : ViewModel() {
         _currentScreen.value = Screen.PEER_SELECTION
     }
 
-    // Connect to real discovered peer over TCP socket
+    // Connect to real discovered peer over Wi-Fi Direct / LAN socket
     fun onPeerSelectedForTransfer(peer: DiscoveredDevice) {
         val files = _pendingSharedFiles.value
         if (files.isEmpty()) return
 
-        p2pTransferManager?.stopDiscovery()
+        lastSelectedPeer = peer
         p2pTransferManager?.startOutgoingTransfer(
             targetPeer = peer,
             files = files,
@@ -323,6 +330,18 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.Main) {
             _currentScreen.value = Screen.TRANSFER
         }
+    }
+
+    fun retryOutgoingTransfer() {
+        val peer = lastSelectedPeer ?: return
+        val files = _pendingSharedFiles.value
+        if (files.isEmpty()) return
+        p2pTransferManager?.startOutgoingTransfer(
+            targetPeer = peer,
+            files = files,
+            senderProfile = _userProfile.value
+        )
+        _activeSession.value = p2pTransferManager?.currentSession?.value
     }
 
     // Backward-compatible for tests / avatars

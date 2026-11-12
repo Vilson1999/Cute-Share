@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -49,6 +50,7 @@ fun RealTimeTransferMonitor(
     session: TransferSession,
     onTogglePause: () -> Unit,
     onCancel: () -> Unit,
+    onRetry: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val animatedProgress by animateFloatAsState(
@@ -174,7 +176,12 @@ fun RealTimeTransferMonitor(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 // Peer device avatar and name
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                ) {
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
@@ -226,8 +233,9 @@ fun RealTimeTransferMonitor(
                         Text(
                             text = when {
                                 session.isCompleted -> if (session.isOutgoing) "All files transferred" else "Saved to Download/Cute Share"
-                                session.isCancelled -> "Transfer cancelled"
+                                session.isCancelled -> session.statusMessage ?: "Transfer cancelled"
                                 session.isPaused -> "Paused"
+                                !session.statusMessage.isNullOrBlank() -> session.statusMessage
                                 else -> "${session.files.count { it.status == com.example.model.TransferStatus.COMPLETED }}/${session.files.size} completed"
                             },
                             fontSize = 12.sp,
@@ -235,13 +243,14 @@ fun RealTimeTransferMonitor(
                                 session.isCompleted -> Color(0xFF10B981)
                                 session.isCancelled -> Color(0xFFF43F5E)
                                 session.isPaused -> Color(0xFFF59E0B)
+                                !session.statusMessage.isNullOrBlank() -> Color(0xFF00E5FF)
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             }
                         )
                     }
                 }
 
-                // Pause / Resume and Cancel buttons with new design icon backgrounds
+                // Pause / Resume, Cancel, or Retry buttons with new design icon backgrounds
                 if (!session.isCompleted && !session.isCancelled) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -273,6 +282,35 @@ fun RealTimeTransferMonitor(
                             onClick = onCancel,
                             modifier = Modifier.testTag("monitor_cancel_button")
                         )
+                    }
+                } else if (session.isCancelled && session.isOutgoing && onRetry != null) {
+                    Surface(
+                        onClick = onRetry,
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFF0284C7),
+                        contentColor = Color.White,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("monitor_retry_button")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.PlayArrow,
+                                contentDescription = "Retry transfer",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Retry",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
             }

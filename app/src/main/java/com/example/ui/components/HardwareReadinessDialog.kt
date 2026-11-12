@@ -125,28 +125,7 @@ fun HardwareReadinessDialog(
     }
 
     fun autoEnableAll() {
-        val missingPermissions = mutableListOf<String>()
-        if (!hasLocPerm) {
-            missingPermissions.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
-            missingPermissions.add(android.Manifest.permission.ACCESS_COARSE_LOCATION)
-        }
-        if (!hasDownloadWritePerm && android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
-            missingPermissions.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            missingPermissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-        if (!hasNearbyWifiPerm && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            missingPermissions.add(android.Manifest.permission.NEARBY_WIFI_DEVICES)
-        }
-        if (!hasBluetoothPerm) {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                missingPermissions.add(android.Manifest.permission.BLUETOOTH_SCAN)
-                missingPermissions.add(android.Manifest.permission.BLUETOOTH_CONNECT)
-                missingPermissions.add(android.Manifest.permission.BLUETOOTH_ADVERTISE)
-            } else {
-                missingPermissions.add(android.Manifest.permission.BLUETOOTH)
-                missingPermissions.add(android.Manifest.permission.BLUETOOTH_ADMIN)
-            }
-        }
+        val missingPermissions = HardwareReadinessManager.getMissingPermissions(context)
         if (missingPermissions.isNotEmpty()) {
             permissionsLauncher.launch(missingPermissions.toTypedArray())
             return

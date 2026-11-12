@@ -38,8 +38,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 object ThumbnailHelper {
-    // 2 MB in-memory LRU cache of low-quality thumbnails to prevent OOM on low-RAM devices
-    private val memoryCache = object : LruCache<String, ImageBitmap>(2 * 1024) {
+    // 4 MB in-memory LRU cache for ultra-fast smooth scrolling and browsing
+    private val memoryCache = object : LruCache<String, ImageBitmap>(4 * 1024) {
         override fun sizeOf(key: String, value: ImageBitmap): Int {
             return (value.asAndroidBitmap().allocationByteCount / 1024).coerceAtLeast(1)
         }

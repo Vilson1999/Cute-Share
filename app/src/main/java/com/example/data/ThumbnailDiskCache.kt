@@ -20,10 +20,10 @@ import kotlin.math.roundToInt
 class ThumbnailDiskCache(private val cacheDir: File) {
 
     companion object {
-        const val MAX_CACHE_BYTES: Long = 10L * 1024L * 1024L // 10 MB strict limit
-        const val LOW_QUALITY_PERCENT: Int = 35
-        const val MAX_IMAGE_THUMB_PX: Int = 128
-        const val MAX_APP_ICON_PX: Int = 72
+        const val MAX_CACHE_BYTES: Long = 20L * 1024L * 1024L // 20 MB strict limit for fast browsing
+        const val LOW_QUALITY_PERCENT: Int = 70 // 2x quality compression
+        const val MAX_IMAGE_THUMB_PX: Int = 256 // 2x thumbnail resolution
+        const val MAX_APP_ICON_PX: Int = 144 // 2x app icon resolution
         private const val CACHE_DIR_NAME = ".thumb_cache"
         private const val ENTRY_SUFFIX = ".thumb"
 
