@@ -1045,12 +1045,12 @@ class P2PTransferManager(
                             p2pController.connectionSnapshot.value?.info?.groupFormed != true
                         ) {
                             retriedConnect = true
-                            updateSessionStatus("Waiting for Wi-Fi Direct approval on ${targetPeer.name}...")
+                            updateSessionStatus("Waiting for approval...")
                             p2pController.initiatePeerConnection(cachedTargetMac) {}
                         } else if (cycle == 4 &&
                             p2pController.connectionSnapshot.value?.info?.groupFormed != true
                         ) {
-                            updateSessionStatus("Accept Wi-Fi Direct prompt on ${targetPeer.name} if shown...")
+                            updateSessionStatus("Connecting...")
                         }
 
                         val snap = p2pController.connectionSnapshot.value
@@ -1159,9 +1159,9 @@ class P2PTransferManager(
                             currentSpeedBytesPerSec = 0L,
                             remainingSeconds = 0L,
                             statusMessage = if (cachedTargetMac == null && !hasLanIp) {
-                                "No peer route found. Ensure Wi-Fi & Location are on."
+                                "Peer unreachable"
                             } else {
-                                "Could not connect to ${targetPeer.name}. Ensure Receive is open on peer and tap Retry."
+                                "Connection failed"
                             },
                             files = it.files.map { f -> f.copy(status = TransferStatus.CANCELLED) }
                         )

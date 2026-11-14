@@ -278,7 +278,7 @@ fun PeerSelectionScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (discoveredPeers.isEmpty()) "Searching for receiver..." else "${discoveredPeers.size} nearby device ready • Tap photo to send",
+                    text = if (discoveredPeers.isEmpty()) "Searching..." else "${discoveredPeers.size} found",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -302,22 +302,13 @@ fun PeerSelectionScreen(
                             .testTag("rescan_peers_button")
                     ) {
                         Text(
-                            text = "Tap to Rescan",
+                            text = "Rescan",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF00E5FF)
                         )
                     }
                 }
-
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Make sure 2nd device has Cute Share open on Receive screen with Wi-Fi & Location ON",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                    modifier = Modifier.padding(horizontal = 32.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
             }
         }
 

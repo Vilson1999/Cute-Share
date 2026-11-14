@@ -1,25 +1,23 @@
 package com.example.ui.components
 
+import android.Manifest
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.LocationOn
-import com.example.ui.icons.AppIcons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -49,7 +47,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.HardwareReadinessManager
+import com.example.ui.icons.AppIcons
 
+private enum class ReadinessAutoStep {
+    RUNTIME_PERMS,
+    ALL_FILES,
+    WIFI,
+    BLUETOOTH,
+    LOCATION
+}
+
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun HardwareReadinessDialog(
     actionName: String = "Share",
@@ -60,45 +68,171 @@ fun HardwareReadinessDialog(
 
     var missingSetting by remember { mutableStateOf(HardwareReadinessManager.getMissingRequiredSetting(context)) }
     var hasAllPerms by remember { mutableStateOf(HardwareReadinessManager.hasAllPermissions(context)) }
+    var hasAllFilesPerm by remember { mutableStateOf(HardwareReadinessManager.hasAllFilesPermission(context)) }
     var hasNearbyWifiPerm by remember { mutableStateOf(HardwareReadinessManager.hasNearbyWifiPermission(context)) }
     var hasBluetoothPerm by remember { mutableStateOf(HardwareReadinessManager.hasBluetoothPermissions(context)) }
     var hasLocPerm by remember { mutableStateOf(HardwareReadinessManager.hasLocationPermission(context)) }
+    var isWifiOn by remember { mutableStateOf(HardwareReadinessManager.isWifiEnabled(context)) }
+    var isBluetoothOn by remember { mutableStateOf(HardwareReadinessManager.isBluetoothEnabled(context)) }
+    var isLocationOn by remember { mutableStateOf(HardwareReadinessManager.isLocationEnabled(context)) }
     val locationRequired = HardwareReadinessManager.isLocationRequired()
+
+    var activeAutoStep by remember { mutableStateOf<ReadinessAutoStep?>(null) }
 
     fun refreshStates() {
         missingSetting = HardwareReadinessManager.getMissingRequiredSetting(context)
         hasAllPerms = HardwareReadinessManager.hasAllPermissions(context)
+        hasAllFilesPerm = HardwareReadinessManager.hasAllFilesPermission(context)
         hasNearbyWifiPerm = HardwareReadinessManager.hasNearbyWifiPermission(context)
         hasBluetoothPerm = HardwareReadinessManager.hasBluetoothPermissions(context)
         hasLocPerm = HardwareReadinessManager.hasLocationPermission(context)
+        isWifiOn = HardwareReadinessManager.isWifiEnabled(context)
+        isBluetoothOn = HardwareReadinessManager.isBluetoothEnabled(context)
+        isLocationOn = HardwareReadinessManager.isLocationEnabled(context)
     }
 
-    val isWifiOn = missingSetting != HardwareReadinessManager.RequiredSetting.WIFI && HardwareReadinessManager.isWifiEnabled(context)
-    val isBluetoothOn = missingSetting != HardwareReadinessManager.RequiredSetting.BLUETOOTH && HardwareReadinessManager.isBluetoothEnabled(context)
-    val isLocationOn = !locationRequired || (missingSetting != HardwareReadinessManager.RequiredSetting.LOCATION && HardwareReadinessManager.isLocationEnabled(context))
+    lateinit var launchStep: (ReadinessAutoStep?) -> Unit
 
     val permissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         refreshStates()
+        val prev = activeAutoStep
+        if (prev == ReadinessAutoStep.RUNTIME_PERMS) {
+            launchStep(ReadinessAutoStep.RUNTIME_PERMS)
+        }
+    }
+
+    val allFilesSettingsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        refreshStates()
+        val prev = activeAutoStep
+        if (prev == ReadinessAutoStep.ALL_FILES) {
+            launchStep(ReadinessAutoStep.ALL_FILES)
+        }
     }
 
     val wifiSettingsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
         refreshStates()
+        val prev = activeAutoStep
+        if (prev == ReadinessAutoStep.WIFI) {
+            launchStep(ReadinessAutoStep.WIFI)
+        }
     }
 
     val bluetoothLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
         refreshStates()
+        val prev = activeAutoStep
+        if (prev == ReadinessAutoStep.BLUETOOTH) {
+            launchStep(ReadinessAutoStep.BLUETOOTH)
+        }
     }
 
     val locationSettingsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
         refreshStates()
+        activeAutoStep = null
+    }
+
+    fun requestAllFilesAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                allFilesSettingsLauncher.launch(HardwareReadinessManager.getManageAllFilesAccessIntent(context))
+            } catch (_: Exception) {
+                try {
+                    allFilesSettingsLauncher.launch(HardwareReadinessManager.getFallbackAllFilesAccessIntent())
+                } catch (_: Exception) {
+                    activeAutoStep = null
+                }
+            }
+        } else {
+            permissionsLauncher.launch(
+                arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                )
+            )
+        }
+    }
+
+    launchStep = { completedStep ->
+        if (HardwareReadinessManager.isAllHardwareReady(context)) {
+            activeAutoStep = null
+        } else {
+            val steps = ReadinessAutoStep.entries
+            val startIdx = if (completedStep == null) 0 else steps.indexOf(completedStep) + 1
+            var launched = false
+            for (i in startIdx until steps.size) {
+                when (steps[i]) {
+                    ReadinessAutoStep.RUNTIME_PERMS -> {
+                        val missingPerms = HardwareReadinessManager.getMissingPermissions(context)
+                        if (missingPerms.isNotEmpty()) {
+                            activeAutoStep = ReadinessAutoStep.RUNTIME_PERMS
+                            permissionsLauncher.launch(missingPerms.toTypedArray())
+                            launched = true
+                            break
+                        }
+                    }
+                    ReadinessAutoStep.ALL_FILES -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                            !HardwareReadinessManager.hasAllFilesPermission(context)
+                        ) {
+                            activeAutoStep = ReadinessAutoStep.ALL_FILES
+                            requestAllFilesAccess()
+                            launched = true
+                            break
+                        }
+                    }
+                    ReadinessAutoStep.WIFI -> {
+                        if (!HardwareReadinessManager.isWifiEnabled(context)) {
+                            activeAutoStep = ReadinessAutoStep.WIFI
+                            try {
+                                wifiSettingsLauncher.launch(HardwareReadinessManager.getEnableWifiIntent())
+                                launched = true
+                            } catch (_: Exception) {
+                                activeAutoStep = null
+                            }
+                            break
+                        }
+                    }
+                    ReadinessAutoStep.BLUETOOTH -> {
+                        if (!HardwareReadinessManager.isBluetoothEnabled(context)) {
+                            activeAutoStep = ReadinessAutoStep.BLUETOOTH
+                            try {
+                                bluetoothLauncher.launch(HardwareReadinessManager.getEnableBluetoothIntent())
+                                launched = true
+                            } catch (_: Exception) {
+                                activeAutoStep = null
+                            }
+                            break
+                        }
+                    }
+                    ReadinessAutoStep.LOCATION -> {
+                        if (HardwareReadinessManager.isLocationRequired() &&
+                            !HardwareReadinessManager.isLocationEnabled(context)
+                        ) {
+                            activeAutoStep = ReadinessAutoStep.LOCATION
+                            try {
+                                locationSettingsLauncher.launch(HardwareReadinessManager.getEnableLocationIntent())
+                                launched = true
+                            } catch (_: Exception) {
+                                activeAutoStep = null
+                            }
+                            break
+                        }
+                    }
+                }
+            }
+            if (!launched) {
+                activeAutoStep = null
+            }
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -120,35 +254,13 @@ fun HardwareReadinessDialog(
 
     LaunchedEffect(isCompletelyReady) {
         if (isCompletelyReady) {
+            activeAutoStep = null
             onAllReady()
         }
     }
 
-    fun autoEnableAll() {
-        val missingPermissions = HardwareReadinessManager.getMissingPermissions(context)
-        if (missingPermissions.isNotEmpty()) {
-            permissionsLauncher.launch(missingPermissions.toTypedArray())
-            return
-        }
-
-        when (HardwareReadinessManager.getMissingRequiredSetting(context)) {
-            HardwareReadinessManager.RequiredSetting.WIFI -> {
-                try {
-                    wifiSettingsLauncher.launch(HardwareReadinessManager.getEnableWifiIntent())
-                } catch (_: Exception) {}
-            }
-            HardwareReadinessManager.RequiredSetting.BLUETOOTH -> {
-                try {
-                    bluetoothLauncher.launch(HardwareReadinessManager.getEnableBluetoothIntent())
-                } catch (_: Exception) {}
-            }
-            HardwareReadinessManager.RequiredSetting.LOCATION -> {
-                try {
-                    locationSettingsLauncher.launch(HardwareReadinessManager.getEnableLocationIntent())
-                } catch (_: Exception) {}
-            }
-            null -> Unit
-        }
+    if (isCompletelyReady) {
+        return
     }
 
     AlertDialog(
@@ -170,19 +282,12 @@ fun HardwareReadinessDialog(
                     )
                 }
                 Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "Direct Share Setup",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "Auto-enabling hardware for $actionName",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "Permissions",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
             }
         },
         text = {
@@ -190,82 +295,87 @@ fun HardwareReadinessDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    text = "Cute Share uses your device's own Wi-Fi Direct. Turn on these features for high-speed direct sharing:",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(2.dp))
-
-                HardwareStatusItem(
-                    title = "Wi-Fi Direct",
-                    subtitle = "Direct device connection (no router needed)",
-                    icon = AppIcons.Wifi,
-                    iconColor = Color(0xFF00E5FF),
-                    isReady = isWifiOn,
-                    onEnable = {
-                        try {
-                            wifiSettingsLauncher.launch(HardwareReadinessManager.getEnableWifiIntent())
-                        } catch (_: Exception) {}
-                    }
-                )
-
-                HardwareStatusItem(
-                    title = "Bluetooth",
-                    subtitle = "Nearby peer advertising, pairing and transfer",
-                    icon = AppIcons.Bluetooth,
-                    iconColor = Color(0xFF38BDF8),
-                    isReady = isBluetoothOn && hasBluetoothPerm,
-                    onEnable = {
-                        if (!hasBluetoothPerm) {
-                            val perms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                                arrayOf(
-                                    android.Manifest.permission.BLUETOOTH_SCAN,
-                                    android.Manifest.permission.BLUETOOTH_CONNECT,
-                                    android.Manifest.permission.BLUETOOTH_ADVERTISE
-                                )
-                            } else {
-                                arrayOf(
-                                    android.Manifest.permission.BLUETOOTH,
-                                    android.Manifest.permission.BLUETOOTH_ADMIN
-                                )
-                            }
-                            permissionsLauncher.launch(perms)
-                        } else {
-                            try {
-                                bluetoothLauncher.launch(HardwareReadinessManager.getEnableBluetoothIntent())
-                            } catch (_: Exception) {}
-                        }
-                    }
-                )
-
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                // Only ask/display items that are NOT currently granted or turned on
+                if (!hasAllFilesPerm) {
                     HardwareStatusItem(
-                        title = "Nearby Devices",
-                        subtitle = "Required to scan and connect with nearby phones",
-                        icon = AppIcons.NearMe,
-                        iconColor = Color(0xFFA855F7),
-                        isReady = hasNearbyWifiPerm,
+                        title = "All Files Access",
+                        icon = AppIcons.FolderOpen,
+                        iconColor = Color(0xFFF59E0B),
                         onEnable = {
-                            permissionsLauncher.launch(arrayOf(android.Manifest.permission.NEARBY_WIFI_DEVICES))
+                            activeAutoStep = null
+                            requestAllFilesAccess()
                         }
                     )
                 }
 
-                if (locationRequired) {
+                if (!isWifiOn) {
+                    HardwareStatusItem(
+                        title = "Wi-Fi Direct",
+                        icon = AppIcons.Wifi,
+                        iconColor = Color(0xFF00E5FF),
+                        onEnable = {
+                            activeAutoStep = null
+                            try {
+                                wifiSettingsLauncher.launch(HardwareReadinessManager.getEnableWifiIntent())
+                            } catch (_: Exception) {}
+                        }
+                    )
+                }
+
+                if (!(isBluetoothOn && hasBluetoothPerm)) {
+                    HardwareStatusItem(
+                        title = "Bluetooth",
+                        icon = AppIcons.Bluetooth,
+                        iconColor = Color(0xFF38BDF8),
+                        onEnable = {
+                            activeAutoStep = null
+                            if (!hasBluetoothPerm) {
+                                val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                    arrayOf(
+                                        Manifest.permission.BLUETOOTH_SCAN,
+                                        Manifest.permission.BLUETOOTH_CONNECT,
+                                        Manifest.permission.BLUETOOTH_ADVERTISE
+                                    )
+                                } else {
+                                    arrayOf(
+                                        Manifest.permission.BLUETOOTH,
+                                        Manifest.permission.BLUETOOTH_ADMIN
+                                    )
+                                }
+                                permissionsLauncher.launch(perms)
+                            } else {
+                                try {
+                                    bluetoothLauncher.launch(HardwareReadinessManager.getEnableBluetoothIntent())
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    )
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNearbyWifiPerm) {
+                    HardwareStatusItem(
+                        title = "Nearby Devices",
+                        icon = AppIcons.NearMe,
+                        iconColor = Color(0xFFA855F7),
+                        onEnable = {
+                            activeAutoStep = null
+                            permissionsLauncher.launch(arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES))
+                        }
+                    )
+                }
+
+                if (locationRequired && !(isLocationOn && hasLocPerm)) {
                     HardwareStatusItem(
                         title = "Location Services",
-                        subtitle = "Required by Android for Wi-Fi Direct P2P",
                         icon = Icons.Rounded.LocationOn,
                         iconColor = Color(0xFF10B981),
-                        isReady = isLocationOn && hasLocPerm,
                         onEnable = {
+                            activeAutoStep = null
                             if (!hasLocPerm) {
                                 permissionsLauncher.launch(
                                     arrayOf(
-                                        android.Manifest.permission.ACCESS_FINE_LOCATION,
-                                        android.Manifest.permission.ACCESS_COARSE_LOCATION
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
                                     )
                                 )
                             } else {
@@ -280,13 +390,7 @@ fun HardwareReadinessDialog(
         },
         confirmButton = {
             Button(
-                onClick = {
-                    if (isCompletelyReady) {
-                        onAllReady()
-                    } else {
-                        autoEnableAll()
-                    }
-                },
+                onClick = { launchStep(null) },
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -295,7 +399,7 @@ fun HardwareReadinessDialog(
                 modifier = Modifier.testTag("auto_turn_on_all_button")
             ) {
                 Text(
-                    text = if (isCompletelyReady) "Continue" else "Auto Turn On & Ready",
+                    text = "Turn On",
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -314,19 +418,17 @@ fun HardwareReadinessDialog(
 @Composable
 private fun HardwareStatusItem(
     title: String,
-    subtitle: String,
     icon: ImageVector,
     iconColor: Color,
-    isReady: Boolean,
     onEnable: () -> Unit
 ) {
     Surface(
         onClick = onEnable,
         shape = RoundedCornerShape(12.dp),
-        color = if (isReady) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (isReady) Color(0xFF10B981).copy(alpha = 0.3f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+            MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
         ),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -351,52 +453,29 @@ private fun HardwareStatusItem(
 
             Spacer(modifier = Modifier.width(10.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = subtitle,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            Text(
+                text = title,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            if (isReady) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(24.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF10B981).copy(alpha = 0.2f))
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Check,
-                        contentDescription = "Ready",
-                        tint = Color(0xFF10B981),
-                        modifier = Modifier.size(15.dp)
-                    )
-                }
-            } else {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = "Turn On",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = "Turn On",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }

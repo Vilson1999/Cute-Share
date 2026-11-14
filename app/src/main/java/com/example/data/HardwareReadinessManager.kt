@@ -7,8 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Environment
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
@@ -30,23 +32,26 @@ object HardwareReadinessManager {
                 Manifest.permission.BLUETOOTH_ADVERTISE,
                 Manifest.permission.BLUETOOTH_CONNECT
             )
-            // Android 12 / 12L (API 31-32): Bluetooth Nearby + Location for Wi-Fi P2P
+            // Android 12 / 12L (API 31-32): Bluetooth Nearby + Location + Storage
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> arrayOf(
                 Manifest.permission.BLUETOOTH_SCAN,
                 Manifest.permission.BLUETOOTH_ADVERTISE,
                 Manifest.permission.BLUETOOTH_CONNECT,
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.READ_EXTERNAL_STORAGE
             )
-            // Android 10 & 11 (API 29-30): Location runtime permission (BLUETOOTH is install-time, Scoped Storage for Downloads)
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> arrayOf(
+            // Android 11 (API 30): Location + Storage
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> arrayOf(
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.READ_EXTERNAL_STORAGE
             )
-            // Android 9 (API 28): Location + WRITE_EXTERNAL_STORAGE for Downloads
+            // Android 9 & 10 (API 28-29): Location + Read/Write External Storage
             else -> arrayOf(
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.READ_EXTERNAL_STORAGE,
                 Manifest.permission.WRITE_EXTERNAL_STORAGE
             )
         }
@@ -56,6 +61,44 @@ object HardwareReadinessManager {
         val perms = getRequiredPermissions()
         return perms.all {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        } && hasAllFilesPermission(context)
+    }
+
+    fun hasAllFilesPermission(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                Environment.isExternalStorageManager()
+            } catch (_: Exception) {
+                false
+            }
+        } else {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    fun getManageAllFilesAccessIntent(context: Context): Intent {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:${context.packageName}")
+            )
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+        }
+    }
+
+    fun getFallbackAllFilesAccessIntent(): Intent {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+        } else {
+            Intent(Settings.ACTION_SETTINGS)
         }
     }
 
@@ -152,6 +195,20 @@ object HardwareReadinessManager {
         } else {
             true
         }
+    }
+
+    fun getMissingRequiredSettings(context: Context): List<RequiredSetting> {
+        val missing = mutableListOf<RequiredSetting>()
+        if (!isWifiEnabled(context)) {
+            missing.add(RequiredSetting.WIFI)
+        }
+        if (!isBluetoothEnabled(context)) {
+            missing.add(RequiredSetting.BLUETOOTH)
+        }
+        if (isLocationRequired() && !isLocationEnabled(context)) {
+            missing.add(RequiredSetting.LOCATION)
+        }
+        return missing
     }
 
     fun isAllHardwareReady(context: Context): Boolean {

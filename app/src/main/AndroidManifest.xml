@@ -40,10 +40,19 @@
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="tiramisu" />
 
-    <!-- Android 9 (API 28) only: save received files to public Downloads -->
+    <!-- Android 9-12 storage & Android 11+ All Files Access for SD card / APK discovery -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
+        android:maxSdkVersion="29"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" tools:targetApi="upside_down_cake" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
 
     <!-- Queries for installed launcher apps to share APKs -->
     <queries>

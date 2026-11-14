@@ -66,6 +66,7 @@ android {
 
   buildTypes {
     release {
+      isDebuggable = false
       isCrunchPngs = true
       isMinifyEnabled = true
       isShrinkResources = true
@@ -100,6 +101,12 @@ android {
     localeFilters += listOf("en")
   }
   packaging {
+    dex {
+      useLegacyPackaging = true
+    }
+    jniLibs {
+      useLegacyPackaging = true
+    }
     resources {
       excludes += setOf(
         "/META-INF/{AL2.0,LGPL2.1}",
@@ -108,11 +115,15 @@ android {
         "/META-INF/*.version",
         "/META-INF/CHANGES",
         "/META-INF/README*",
+        "/META-INF/androidx.*",
+        "/META-INF/com.google.*",
+        "/META-INF/kotlinx_*",
         "DebugProbesKt.bin",
         "kotlin-tooling-metadata.json",
         "**/*.kotlin_metadata",
         "**/*.kotlin_builtins",
-        "META-INF/*.kotlin_module"
+        "META-INF/*.kotlin_module",
+        "assets/dexopt/**"
       )
     }
   }

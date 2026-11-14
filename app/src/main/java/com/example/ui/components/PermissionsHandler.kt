@@ -1,9 +1,7 @@
 package com.example.ui.components
 
-import android.Manifest
 import android.content.Context
 import android.os.Build
-import com.example.data.HardwareReadinessManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -28,6 +26,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,6 +43,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.data.HardwareReadinessManager
 import com.example.ui.icons.AppIcons
 
 @Composable
@@ -48,22 +56,82 @@ fun PermissionsHandler(
     onPermissionsResult: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
-    val permissionsToRequest = HardwareReadinessManager.getRequiredPermissions()
+
+    var hasAllPerms by remember(showDialog) { mutableStateOf(HardwareReadinessManager.hasAllPermissions(context)) }
+    var hasAllFilesPerm by remember(showDialog) { mutableStateOf(HardwareReadinessManager.hasAllFilesPermission(context)) }
+    var hasNearbyWifiPerm by remember(showDialog) { mutableStateOf(HardwareReadinessManager.hasNearbyWifiPermission(context)) }
+    var hasBluetoothPerm by remember(showDialog) { mutableStateOf(HardwareReadinessManager.hasBluetoothPermissions(context)) }
+    var hasLocPerm by remember(showDialog) { mutableStateOf(HardwareReadinessManager.hasLocationPermission(context)) }
+
+    fun refreshStates() {
+        hasAllPerms = HardwareReadinessManager.hasAllPermissions(context)
+        hasAllFilesPerm = HardwareReadinessManager.hasAllFilesPermission(context)
+        hasNearbyWifiPerm = HardwareReadinessManager.hasNearbyWifiPermission(context)
+        hasBluetoothPerm = HardwareReadinessManager.hasBluetoothPermissions(context)
+        hasLocPerm = HardwareReadinessManager.hasLocationPermission(context)
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, showDialog) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && showDialog) {
+                refreshStates()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val allFilesLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE).edit {
+            putBoolean("has_asked_permissions", true)
+        }
+        onPermissionsResult(HardwareReadinessManager.hasAllPermissions(context))
+        onDismiss()
+    }
+
+    fun launchAllFilesSettingsIfNeeded(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            !HardwareReadinessManager.hasAllFilesPermission(context)
+        ) {
+            return try {
+                allFilesLauncher.launch(HardwareReadinessManager.getManageAllFilesAccessIntent(context))
+                true
+            } catch (_: Exception) {
+                try {
+                    allFilesLauncher.launch(HardwareReadinessManager.getFallbackAllFilesAccessIntent())
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+            }
+        }
+        return false
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        // Store that permissions dialog was processed
         context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE).edit {
             putBoolean("has_asked_permissions", true)
         }
 
-        val allCoreGranted = HardwareReadinessManager.hasAllPermissions(context)
-        onPermissionsResult(allCoreGranted)
-        onDismiss()
+        if (!launchAllFilesSettingsIfNeeded()) {
+            onPermissionsResult(HardwareReadinessManager.hasAllPermissions(context))
+            onDismiss()
+        }
     }
 
-    if (showDialog) {
+    LaunchedEffect(showDialog, hasAllPerms) {
+        if (showDialog && hasAllPerms) {
+            onPermissionsResult(true)
+            onDismiss()
+        }
+    }
+
+    if (showDialog && !hasAllPerms) {
         AlertDialog(
             onDismissRequest = {
                 context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE).edit {
@@ -76,7 +144,7 @@ fun PermissionsHandler(
             modifier = Modifier.testTag("permissions_dialog"),
             title = {
                 Text(
-                    text = "Allow Sharing Permissions",
+                    text = "Permissions",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -84,53 +152,38 @@ fun PermissionsHandler(
             },
             text = {
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.padding(top = 8.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(top = 4.dp)
                 ) {
-                    Text(
-                        text = "Cute Share needs these permissions to discover nearby phones and transfer files ultra-fast:",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                    if (!hasAllFilesPerm) {
                         PermissionItemRow(
-                            icon = AppIcons.Folder,
-                            iconColor = Color(0xFF38BDF8),
-                            title = "Downloads Storage",
-                            desc = "Save received photos, videos, and files to Downloads"
+                            icon = AppIcons.FolderOpen,
+                            iconColor = Color(0xFFF59E0B),
+                            title = "All Files Access"
                         )
                     }
 
-                    PermissionItemRow(
-                        icon = AppIcons.Wifi,
-                        iconColor = Color(0xFF10B981),
-                        title = "Wi-Fi Direct",
-                        desc = "Direct high-speed wireless transfer up to 50 MB/s"
-                    )
-
-                    PermissionItemRow(
-                        icon = AppIcons.Bluetooth,
-                        iconColor = Color(0xFF3B82F6),
-                        title = "Bluetooth",
-                        desc = "Instantly discover and pair with nearby devices without internet"
-                    )
-
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNearbyWifiPerm) {
                         PermissionItemRow(
                             icon = AppIcons.NearMe,
                             iconColor = Color(0xFFA855F7),
-                            title = "Nearby Devices",
-                            desc = "Scan and connect directly to nearby phones"
+                            title = "Nearby Devices"
                         )
                     }
 
-                    if (HardwareReadinessManager.isLocationRequired()) {
+                    if (!hasBluetoothPerm) {
+                        PermissionItemRow(
+                            icon = AppIcons.Bluetooth,
+                            iconColor = Color(0xFF3B82F6),
+                            title = "Bluetooth"
+                        )
+                    }
+
+                    if (HardwareReadinessManager.isLocationRequired() && !hasLocPerm) {
                         PermissionItemRow(
                             icon = Icons.Rounded.LocationOn,
                             iconColor = Color(0xFFF59E0B),
-                            title = "Location (Android requirement)",
-                            desc = "Required by Android OS for Wi-Fi hotspot and radar"
+                            title = "Location"
                         )
                     }
                 }
@@ -141,7 +194,13 @@ fun PermissionsHandler(
                         context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE).edit {
                             putBoolean("has_asked_permissions", true)
                         }
-                        permissionLauncher.launch(permissionsToRequest)
+                        val missingRuntime = HardwareReadinessManager.getMissingPermissions(context)
+                        if (missingRuntime.isNotEmpty()) {
+                            permissionLauncher.launch(missingRuntime.toTypedArray())
+                        } else if (!launchAllFilesSettingsIfNeeded()) {
+                            onPermissionsResult(HardwareReadinessManager.hasAllPermissions(context))
+                            onDismiss()
+                        }
                     },
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -150,7 +209,7 @@ fun PermissionsHandler(
                     ),
                     modifier = Modifier.testTag("grant_permissions_button")
                 ) {
-                    Text("Grant Permissions", fontWeight = FontWeight.Bold)
+                    Text("Allow", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -174,8 +233,7 @@ fun PermissionsHandler(
 private fun PermissionItemRow(
     icon: ImageVector,
     iconColor: Color,
-    title: String,
-    desc: String
+    title: String
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -184,30 +242,23 @@ private fun PermissionItemRow(
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(36.dp)
+                .size(34.dp)
                 .clip(CircleShape)
                 .background(iconColor.copy(alpha = 0.18f))
         ) {
             Icon(
                 imageVector = icon,
-                contentDescription = null,
+                contentDescription = title,
                 tint = iconColor,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(18.dp)
             )
         }
         Spacer(modifier = Modifier.width(12.dp))
-        Column {
-            Text(
-                text = title,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = desc,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        Text(
+            text = title,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }

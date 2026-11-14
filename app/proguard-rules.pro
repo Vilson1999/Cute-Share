@@ -37,8 +37,5 @@
     public static int i(...);
     public static int w(...);
     public static int d(...);
+    public static int e(...);
 }
-
-# Keep our models and data classes safe from unintended reflection/obfuscation breakages
--keepclassmembers class com.example.model.** { *; }
--keepclassmembers class com.example.data.** { *; }

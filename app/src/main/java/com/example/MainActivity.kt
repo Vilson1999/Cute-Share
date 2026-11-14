@@ -97,6 +97,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        viewModel.refreshDeviceFilesIfPermissionChanged()
+    }
+
     override fun onStop() {
         super.onStop()
         // If not actively transferring files, shut down all sockets and discovery

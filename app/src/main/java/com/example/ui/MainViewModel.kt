@@ -5,6 +5,8 @@ import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.R
+import com.example.data.DeviceFileScanner
+import com.example.data.HardwareReadinessManager
 import com.example.data.P2PTransferManager
 import com.example.data.TransferManager
 import com.example.model.CartoonAvatars
@@ -16,6 +18,7 @@ import com.example.model.UserProfile
 import com.example.ui.navigation.Screen
 import com.example.ui.theme.ThemeMode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -73,6 +76,21 @@ class MainViewModel : ViewModel() {
     private val _isAddingMoreToActiveSession = MutableStateFlow(false)
     val isAddingMoreToActiveSession: StateFlow<Boolean> = _isAddingMoreToActiveSession.asStateFlow()
 
+    private val _pendingExternalShareReadiness = MutableStateFlow(false)
+    val pendingExternalShareReadiness: StateFlow<Boolean> = _pendingExternalShareReadiness.asStateFlow()
+
+    // App-lifetime device file cache: starts loading at startup and stays loaded until app closes
+    private val _deviceFiles = MutableStateFlow<List<SharedFile>>(emptyList())
+    val deviceFiles: StateFlow<List<SharedFile>> = _deviceFiles.asStateFlow()
+
+    private val _isLoadingDeviceFiles = MutableStateFlow(true)
+    val isLoadingDeviceFiles: StateFlow<Boolean> = _isLoadingDeviceFiles.asStateFlow()
+
+    private val userPickedFiles = mutableListOf<SharedFile>()
+    private var fileScanJob: Job? = null
+    private var hasStartedInitialFileLoad = false
+    private var lastKnownAllFilesPerm: Boolean? = null
+
     private var lastSelectedPeer: DiscoveredDevice? = null
 
     init {
@@ -94,12 +112,19 @@ class MainViewModel : ViewModel() {
     }
 
     fun attachContext(context: Context) {
-        applicationContext = context.applicationContext
+        val appCtx = context.applicationContext
+        applicationContext = appCtx
         val prefs = context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE)
         _hasAskedPermissions.value = prefs.getBoolean("has_asked_permissions", false)
 
+        if (!hasStartedInitialFileLoad) {
+            hasStartedInitialFileLoad = true
+            lastKnownAllFilesPerm = HardwareReadinessManager.hasAllFilesPermission(appCtx)
+            loadAllDeviceFiles(forceRestart = false)
+        }
+
         if (p2pTransferManager != null) return
-        val manager = P2PTransferManager(context.applicationContext, viewModelScope)
+        val manager = P2PTransferManager(appCtx, viewModelScope)
         p2pTransferManager = manager
 
         viewModelScope.launch {
@@ -148,6 +173,58 @@ class MainViewModel : ViewModel() {
     fun onPermissionsHandled() {
         _showPermissionDialog.value = false
         markPermissionsAsked()
+        loadAllDeviceFiles(forceRestart = true)
+    }
+
+    fun refreshDeviceFilesIfPermissionChanged() {
+        val ctx = applicationContext ?: return
+        val currentPerm = HardwareReadinessManager.hasAllFilesPermission(ctx)
+        val prevPerm = lastKnownAllFilesPerm
+        lastKnownAllFilesPerm = currentPerm
+        if (prevPerm == false && currentPerm) {
+            loadAllDeviceFiles(forceRestart = true)
+        }
+    }
+
+    fun loadAllDeviceFiles(forceRestart: Boolean = false) {
+        val ctx = applicationContext ?: return
+        if (!forceRestart && fileScanJob?.isActive == true) return
+        fileScanJob?.cancel()
+        _isLoadingDeviceFiles.value = true
+        lastKnownAllFilesPerm = HardwareReadinessManager.hasAllFilesPermission(ctx)
+        fileScanJob = viewModelScope.launch {
+            try {
+                val scanned = DeviceFileScanner.queryDeviceFiles(ctx) { batch ->
+                    _deviceFiles.value = mergePickedWithScanned(batch)
+                }
+                _deviceFiles.value = mergePickedWithScanned(scanned)
+            } finally {
+                _isLoadingDeviceFiles.value = false
+            }
+        }
+    }
+
+    fun addPickedFiles(picked: List<SharedFile>) {
+        if (picked.isEmpty()) return
+        synchronized(userPickedFiles) {
+            picked.forEach { file ->
+                userPickedFiles.removeAll { it.name.equals(file.name, ignoreCase = true) && it.sizeBytes == file.sizeBytes }
+                userPickedFiles.add(0, file)
+            }
+        }
+        _deviceFiles.value = mergePickedWithScanned(_deviceFiles.value)
+    }
+
+    private fun mergePickedWithScanned(scanned: List<SharedFile>): List<SharedFile> {
+        val pickedSnapshot = synchronized(userPickedFiles) { userPickedFiles.toList() }
+        if (pickedSnapshot.isEmpty()) return scanned
+        val remaining = scanned.filterNot { item ->
+            pickedSnapshot.any { picked ->
+                picked.uriString == item.uriString ||
+                    (picked.name.equals(item.name, ignoreCase = true) && picked.sizeBytes == item.sizeBytes)
+            }
+        }
+        return pickedSnapshot + remaining
     }
 
     var hasInitializedProfile: Boolean = false
@@ -180,9 +257,10 @@ class MainViewModel : ViewModel() {
         )
         _currentScreen.value = Screen.HOME
 
-        // ASK FOR PERMISSION ONLY FIRST TIME:
-        // Only prompt when user creates account for the very first time and has not been asked before
-        if (!wasCreated && !_hasAskedPermissions.value) {
+        // Only prompt when user creates account for the very first time, has not been asked before,
+        // and some permissions are still missing.
+        val missingPerms = applicationContext?.let { !HardwareReadinessManager.hasAllPermissions(it) } ?: true
+        if (!wasCreated && !_hasAskedPermissions.value && missingPerms) {
             _showPermissionDialog.value = true
         }
     }
@@ -310,8 +388,26 @@ class MainViewModel : ViewModel() {
     fun handleExternalSharedFiles(files: List<SharedFile>) {
         if (files.isEmpty()) return
         _pendingSharedFiles.value = files
-        startDiscoveryMode()
-        _currentScreen.value = Screen.PEER_SELECTION
+        val ctx = applicationContext
+        if (ctx == null || HardwareReadinessManager.isAllHardwareReady(ctx)) {
+            _pendingExternalShareReadiness.value = false
+            startDiscoveryMode()
+            _currentScreen.value = Screen.PEER_SELECTION
+        } else {
+            _pendingExternalShareReadiness.value = true
+        }
+    }
+
+    fun completeExternalSharedFilesAfterReadiness() {
+        _pendingExternalShareReadiness.value = false
+        if (_pendingSharedFiles.value.isNotEmpty()) {
+            startDiscoveryMode()
+            _currentScreen.value = Screen.PEER_SELECTION
+        }
+    }
+
+    fun cancelExternalSharedFilesReadiness() {
+        _pendingExternalShareReadiness.value = false
     }
 
     // Connect to real discovered peer over Wi-Fi Direct / LAN socket
@@ -408,6 +504,7 @@ class MainViewModel : ViewModel() {
 
     override fun onCleared() {
         super.onCleared()
+        fileScanJob?.cancel()
         cleanupAllBackgroundWork()
     }
 }

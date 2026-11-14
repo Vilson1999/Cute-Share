@@ -221,6 +221,101 @@ class ExampleRobolectricTest {
     org.junit.Assert.assertFalse(active.contains(com.example.model.FileCategory.ARCHIVES))
     org.junit.Assert.assertFalse(active.contains(com.example.model.FileCategory.STORAGE))
   }
+
+  @Test
+  fun `all files access intent targets current app package`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val intent = com.example.data.HardwareReadinessManager.getManageAllFilesAccessIntent(context)
+    org.junit.Assert.assertNotNull(intent.action)
+    org.junit.Assert.assertTrue(intent.dataString?.contains(context.packageName) == true)
+    val fallback = com.example.data.HardwareReadinessManager.getFallbackAllFilesAccessIntent()
+    org.junit.Assert.assertNotNull(fallback.action)
+  }
+
+  @Test
+  fun `device file scanner finds deeply nested apk files and main viewmodel loads at startup`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val nestedDir = java.io.File(context.filesDir, "sd_sim/Apps/v2/Backup")
+    nestedDir.mkdirs()
+    val apkFile = java.io.File(nestedDir, "SampleGame.apk")
+    apkFile.writeBytes(ByteArray(2048) { 1 })
+
+    try {
+      val scanned = com.example.data.DeviceFileScanner.queryDeviceFiles(context)
+      val foundApk = scanned.firstOrNull { it.name == "SampleGame.apk" }
+      org.junit.Assert.assertNotNull("Expected deeply nested SampleGame.apk to be discovered", foundApk)
+      assertEquals(com.example.model.FileCategory.APP, foundApk?.category)
+      assertEquals(true, foundApk?.isDownloadedApk)
+
+      val viewModel = com.example.ui.MainViewModel()
+      viewModel.attachContext(context)
+      // Wait briefly for startup coroutine scan to complete
+      var attempts = 0
+      while (viewModel.isLoadingDeviceFiles.value && attempts < 50) {
+        kotlinx.coroutines.delay(50)
+        attempts++
+      }
+      org.junit.Assert.assertTrue(
+        "Expected MainViewModel to keep scanned files loaded after startup",
+        viewModel.deviceFiles.value.any { it.name == "SampleGame.apk" }
+      )
+
+      val manualPicked = com.example.model.SharedFile(
+        id = "manual_pick_1",
+        name = "ManualApp.apk",
+        sizeBytes = 4096L,
+        formattedSize = "4 KB",
+        category = com.example.model.FileCategory.APP,
+        extension = "APK",
+        lastModified = "Apk App",
+        uriString = "content://test/ManualApp.apk",
+        isDownloadedApk = true
+      )
+      viewModel.addPickedFiles(listOf(manualPicked))
+      org.junit.Assert.assertTrue(viewModel.deviceFiles.value.any { it.name == "ManualApp.apk" })
+    } finally {
+      apkFile.delete()
+      java.io.File(context.filesDir, "sd_sim").deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `hardware readiness only reports missing permissions and external share waits until ready`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val app = context as android.app.Application
+    val shadowApp = org.robolectric.Shadows.shadowOf(app)
+
+    val required = com.example.data.HardwareReadinessManager.getRequiredPermissionsForCurrentDevice()
+    // Initially runtime permissions are not granted in Robolectric
+    val missingBefore = com.example.data.HardwareReadinessManager.getMissingPermissions(context)
+    assertEquals(required.toSet(), missingBefore.toSet())
+    assertEquals(false, com.example.data.HardwareReadinessManager.hasAllPermissions(context))
+
+    // Grant all runtime permissions; only All Files Access (on SDK >= 30) may still remain missing
+    shadowApp.grantPermissions(*required)
+    val missingAfter = com.example.data.HardwareReadinessManager.getMissingPermissions(context)
+    assertEquals(0, missingAfter.size)
+
+    // External share should request readiness check when not all permissions/hardware are ready
+    val viewModel = com.example.ui.MainViewModel()
+    viewModel.attachContext(context)
+    val testFile = com.example.model.SharedFile(
+      id = "ext_1",
+      name = "SharedPhoto.jpg",
+      sizeBytes = 1024L,
+      formattedSize = "1 KB",
+      category = com.example.model.FileCategory.IMAGE,
+      extension = "JPG",
+      lastModified = "Now"
+    )
+    viewModel.handleExternalSharedFiles(listOf(testFile))
+    if (!com.example.data.HardwareReadinessManager.isAllHardwareReady(context)) {
+      assertEquals(true, viewModel.pendingExternalShareReadiness.value)
+      viewModel.completeExternalSharedFilesAfterReadiness()
+    }
+    assertEquals(false, viewModel.pendingExternalShareReadiness.value)
+    assertEquals(com.example.ui.navigation.Screen.PEER_SELECTION, viewModel.currentScreen.value)
+  }
 }
 
 

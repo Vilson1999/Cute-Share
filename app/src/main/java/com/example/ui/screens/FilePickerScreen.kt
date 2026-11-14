@@ -67,7 +67,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.DeviceFileScanner
 import com.example.model.FileCategory
 import com.example.model.SharedFile
 import com.example.model.formatBytes
@@ -79,6 +78,10 @@ import java.util.UUID
 
 @Composable
 fun FilePickerScreen(
+    deviceFiles: List<SharedFile> = emptyList(),
+    isLoadingDeviceFiles: Boolean = false,
+    onAddPickedFiles: (List<SharedFile>) -> Unit = {},
+    onRefreshFiles: () -> Unit = {},
     onBackClick: () -> Unit,
     onSendFiles: (List<SharedFile>) -> Unit,
     isAddingMore: Boolean = false,
@@ -86,15 +89,12 @@ fun FilePickerScreen(
 ) {
     val context = LocalContext.current
     var selectedCategory by remember { mutableStateOf(FileCategory.IMAGE) }
-    val allFiles = remember { mutableStateListOf<SharedFile>() }
     val selectedFileIds = remember { mutableStateListOf<String>() }
-    var isLoadingDeviceFiles by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
-        val scanned = DeviceFileScanner.queryDeviceFiles(context)
-        allFiles.clear()
-        allFiles.addAll(scanned)
-        isLoadingDeviceFiles = false
+        if (deviceFiles.isEmpty() && !isLoadingDeviceFiles) {
+            onRefreshFiles()
+        }
     }
 
     // Real device file picker launcher
@@ -162,8 +162,9 @@ fun FilePickerScreen(
                     isDownloadedApk = true
                 )
 
-                allFiles.removeAll { it.name.equals(newFile.name, ignoreCase = true) && it.sizeBytes == newFile.sizeBytes }
-                allFiles.add(0, newFile)
+                val pickedList = mutableListOf<SharedFile>()
+                pickedList.add(newFile)
+                onAddPickedFiles(pickedList)
                 if (!selectedFileIds.contains(newFile.id)) {
                     selectedFileIds.add(newFile.id)
                 }
@@ -174,12 +175,12 @@ fun FilePickerScreen(
         }
     }
 
-    val filteredFiles = remember(selectedCategory, allFiles.toList()) {
-        allFiles.filter { it.category == selectedCategory }
+    val filteredFiles = remember(selectedCategory, deviceFiles) {
+        deviceFiles.filter { it.category == selectedCategory }
     }
 
-    val selectedFiles = remember(selectedFileIds.toList(), allFiles.toList()) {
-        allFiles.filter { selectedFileIds.contains(it.id) }
+    val selectedFiles = remember(selectedFileIds.toList(), deviceFiles) {
+        deviceFiles.filter { selectedFileIds.contains(it.id) }
     }
     val totalSelectedSize = remember(selectedFiles) {
         selectedFiles.sumOf { it.sizeBytes }
@@ -354,17 +355,10 @@ fun FilePickerScreen(
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "No ${selectedCategory.title} Found",
+                            text = "No ${selectedCategory.title}",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Select files directly from your device storage or downloads.",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(18.dp))
                         OutlinedButton(
@@ -377,7 +371,7 @@ fun FilePickerScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Browse Any File")
+                            Text("Browse Storage")
                         }
                     }
                 }
@@ -837,16 +831,7 @@ private fun AppGridSection(
             }
         }
 
-        if (downloadedApks.isEmpty()) {
-            item(span = { GridItemSpan(5) }) {
-                Text(
-                    text = "No .apk apps found in storage",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-            }
-        } else {
+        if (downloadedApks.isNotEmpty()) {
             items(downloadedApks, key = { it.id }) { apk ->
                 val isSelected = selectedFileIds.contains(apk.id)
                 AppGridItem(

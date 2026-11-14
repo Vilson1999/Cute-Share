@@ -126,7 +126,7 @@ fun ReceiveRadarScreen(
             )
 
             Text(
-                text = "Ready to Receive",
+                text = "Receive",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
@@ -201,7 +201,7 @@ fun ReceiveRadarScreen(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Waiting for sender...",
+                text = "Waiting...",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface
@@ -261,7 +261,7 @@ fun ReceiveRadarScreen(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Wants to share ${req.files.size} file(s) (${formatBytes(req.totalSize)})",
+                                text = "${req.files.size} file(s) • ${formatBytes(req.totalSize)}",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
