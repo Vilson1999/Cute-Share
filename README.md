@@ -18,13 +18,18 @@
 
 Cute Share is an Android app for discovering nearby devices and transferring files directly between them.
 
+## Screenshots
+
+<p align="center">
+  <img src="public/assets/aistudio/Screenshot_20261108-115717_26be7851.png" alt="Home screen" width="160" />&nbsp;
+  <img src="public/assets/aistudio/Screenshot_20261108-115730_41cf81c3.png" alt="Browse files screen" width="160" />&nbsp;
+  <img src="public/assets/aistudio/Screenshot_20261108-122042_4b15d2e9.png" alt="Searching for a receiver" width="160" />&nbsp;
+  <img src="public/assets/aistudio/Screenshot_20261109-134835_57e038de.png" alt="Ready to receive screen" width="160" />
+</p>
+
 ## Features
 
 ### Home & quick actions
-
-<p align="center">
-  <img src="public/assets/aistudio/Screenshot_20261108-115717_26be7851.png" alt="Cute Share home screen with Send and Receive actions" width="240" />
-</p>
 
 - Start a file send or open the receive screen from the home screen.
 - Create a profile with a display name and a cute avatar.
@@ -33,10 +38,6 @@ Cute Share is an Android app for discovering nearby devices and transferring fil
 
 ### Browse and choose files
 
-<p align="center">
-  <img src="public/assets/aistudio/Screenshot_20261108-115730_41cf81c3.png" alt="File browser with media categories and storage browsing" width="240" />
-</p>
-
 - Browse files on the device or open the system file picker.
 - Find and select images, videos, audio, apps, documents, archives, and other storage files.
 - Share files selected through Android's share menu.
@@ -44,20 +45,12 @@ Cute Share is an Android app for discovering nearby devices and transferring fil
 
 ### Send files to a nearby device
 
-<p align="center">
-  <img src="public/assets/aistudio/Screenshot_20261108-122042_4b15d2e9.png" alt="Searching for a nearby receiver before sending files" width="240" />
-</p>
-
 - Discover nearby devices that are ready to receive.
 - Send selected files directly to a chosen peer.
 - See the selected file count and total size while preparing a transfer.
 - Use Wi-Fi and nearby-device connectivity for peer-to-peer sharing.
 
 ### Receive files
-
-<p align="center">
-  <img src="public/assets/aistudio/Screenshot_20261109-134835_57e038de.png" alt="Ready to receive files from a nearby sender" width="240" />
-</p>
 
 - Open the receive screen so a sender can find your device.
 - See when the app is waiting for a sender.
