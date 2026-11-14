@@ -1,0 +1,175 @@
+name: Build Mini Share APKs (ARMv7 & ARMv8)
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Compressed ARMv7 & ARMv8 APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK & Accept Licenses
+        run: |
+          ANDROID_SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          mkdir -p "$ANDROID_SDK/cmdline-tools"
+
+          SDKMANAGER=""
+          if [ -x "$ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager"
+          else
+            FOUND_SM=$(find "$ANDROID_SDK/cmdline-tools" -name "sdkmanager" -type f 2>/dev/null | head -n 1 || true)
+            if [ -n "$FOUND_SM" ] && [ -x "$FOUND_SM" ]; then
+              SDKMANAGER="$FOUND_SM"
+            fi
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "Downloading Android command-line tools..."
+            curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" -o /tmp/cmdline-tools.zip
+            mkdir -p /tmp/cmdline-extract
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-extract
+            rm -rf "$ANDROID_SDK/cmdline-tools/latest"
+            mv /tmp/cmdline-extract/cmdline-tools "$ANDROID_SDK/cmdline-tools/latest"
+            rm -rf /tmp/cmdline-tools.zip /tmp/cmdline-extract
+            SDKMANAGER="$ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager"
+          fi
+
+          echo "ANDROID_HOME=$ANDROID_SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK/platform-tools" >> "$GITHUB_PATH"
+
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_SDK" "platform-tools"
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Prepare Signing Keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          SECRET_STORE_PASS: ${{ secrets.STORE_PASSWORD }}
+          SECRET_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "${{ github.workspace }}/my-upload-key.jks"
+            echo "KEYSTORE_PATH=${{ github.workspace }}/my-upload-key.jks" >> "$GITHUB_ENV"
+            echo "STORE_PASSWORD=$SECRET_STORE_PASS" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$SECRET_KEY_PASS" >> "$GITHUB_ENV"
+          else
+            DEFAULT_PASS="minishare_release_key"
+            keytool -genkeypair -noprompt \
+              -keystore "${{ github.workspace }}/my-upload-key.jks" \
+              -alias upload \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$DEFAULT_PASS" -keypass "$DEFAULT_PASS" \
+              -dname "CN=Vilson Sonkar, O=Mini Share, C=IN"
+            echo "KEYSTORE_PATH=${{ github.workspace }}/my-upload-key.jks" >> "$GITHUB_ENV"
+            echo "STORE_PASSWORD=$DEFAULT_PASS" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$DEFAULT_PASS" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build Separate ARMv7 & ARMv8 Release APKs
+        run: gradle :app:assembleRelease -PsplitApk --no-daemon
+
+      - name: Prepare APK Artifacts & Measure Sizes
+        id: apks
+        run: |
+          mkdir -p "${{ github.workspace }}/release-apks"
+          ARMV7_SRC=$(find app/build/outputs/apk/release -name "*armeabi-v7a*.apk" | head -n 1)
+          ARMV8_SRC=$(find app/build/outputs/apk/release -name "*arm64-v8a*.apk" | head -n 1)
+
+          if [ -z "$ARMV7_SRC" ] || [ -z "$ARMV8_SRC" ]; then
+            echo "Failed to locate split APKs in app/build/outputs/apk/release"
+            ls -la app/build/outputs/apk/release
+            exit 1
+          fi
+
+          ARMV7_OUT="${{ github.workspace }}/release-apks/MiniShare-armv7-armeabi-v7a.apk"
+          ARMV8_OUT="${{ github.workspace }}/release-apks/MiniShare-armv8-arm64-v8a.apk"
+          cp "$ARMV7_SRC" "$ARMV7_OUT"
+          cp "$ARMV8_SRC" "$ARMV8_OUT"
+
+          ARMV7_SIZE=$(du -h "$ARMV7_OUT" | cut -f1)
+          ARMV8_SIZE=$(du -h "$ARMV8_OUT" | cut -f1)
+          echo "armv7_size=$ARMV7_SIZE" >> "$GITHUB_OUTPUT"
+          echo "armv8_size=$ARMV8_SIZE" >> "$GITHUB_OUTPUT"
+
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            RELEASE_TAG="${{ github.ref_name }}"
+          else
+            RELEASE_TAG="v1.0.${{ github.run_number }}"
+          fi
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Upload ARMv7 APK Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: MiniShare-armv7-apk
+          path: release-apks/MiniShare-armv7-armeabi-v7a.apk
+
+      - name: Upload ARMv8 APK Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: MiniShare-armv8-apk
+          path: release-apks/MiniShare-armv8-arm64-v8a.apk
+
+      - name: Publish GitHub Release with Direct Download Links
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.apks.outputs.release_tag }}"
+          REPO="${{ github.repository }}"
+          ARMV7_FILE="release-apks/MiniShare-armv7-armeabi-v7a.apk"
+          ARMV8_FILE="release-apks/MiniShare-armv8-arm64-v8a.apk"
+
+          NOTES=$(cat <<EOF
+          ### Direct APK Downloads
+          - **ARMv7 (\`armeabi-v7a\`)** (${{ steps.apks.outputs.armv7_size }}): https://github.com/${REPO}/releases/download/${TAG}/MiniShare-armv7-armeabi-v7a.apk
+          - **ARMv8 (\`arm64-v8a\`)** (${{ steps.apks.outputs.armv8_size }}): https://github.com/${REPO}/releases/download/${TAG}/MiniShare-armv8-arm64-v8a.apk
+          EOF
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ARMV7_FILE" "$ARMV8_FILE" --clobber
+          else
+            gh release create "$TAG" "$ARMV7_FILE" "$ARMV8_FILE" \
+              --title "Mini Share $TAG" \
+              --latest \
+              --notes "$NOTES"
+          fi
+
+      - name: Write Direct Download Links to Job Summary
+        run: |
+          TAG="${{ steps.apks.outputs.release_tag }}"
+          REPO="${{ github.repository }}"
+          {
+            echo "## Mini Share APK Build Summary"
+            echo ""
+            echo "| Architecture | File Size | Direct Download Link |"
+            echo "|---|---|---|"
+            echo "| ARMv7 (\`armeabi-v7a\`) | ${{ steps.apks.outputs.armv7_size }} | [Download ARMv7 APK](https://github.com/${REPO}/releases/download/${TAG}/MiniShare-armv7-armeabi-v7a.apk) |"
+            echo "| ARMv8 (\`arm64-v8a\`) | ${{ steps.apks.outputs.armv8_size }} | [Download ARMv8 APK](https://github.com/${REPO}/releases/download/${TAG}/MiniShare-armv8-arm64-v8a.apk) |"
+            echo ""
+            echo "### Always-Latest Direct Links"
+            echo "- ARMv7: \`https://github.com/${REPO}/releases/latest/download/MiniShare-armv7-armeabi-v7a.apk\`"
+            echo "- ARMv8: \`https://github.com/${REPO}/releases/latest/download/MiniShare-armv8-arm64-v8a.apk\`"
+          } >> "$GITHUB_STEP_SUMMARY"

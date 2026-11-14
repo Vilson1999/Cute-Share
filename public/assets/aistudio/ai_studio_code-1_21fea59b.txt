@@ -1,0 +1,39 @@
+<!-- Wi-Fi Direct local P2P permissions -->
+<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+<uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+<uses-permission android:name="android.permission.INTERNET" />
+
+<!-- Bluetooth permissions for Android 9, 10, 11 (API 28-30) -->
+<uses-permission
+    android:name="android.permission.BLUETOOTH"
+    android:maxSdkVersion="30" />
+<uses-permission
+    android:name="android.permission.BLUETOOTH_ADMIN"
+    android:maxSdkVersion="30" />
+
+<!-- Bluetooth Nearby Devices permissions for Android 12+ (API 31+) -->
+<uses-permission
+    android:name="android.permission.BLUETOOTH_SCAN"
+    android:usesPermissionFlags="neverForLocation"
+    tools:targetApi="s" />
+<uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+<!-- Location required for Wi-Fi P2P & Bluetooth discovery on Android 9, 10, 11, 12 (API 28-32) -->
+<uses-permission
+    android:name="android.permission.ACCESS_FINE_LOCATION"
+    android:maxSdkVersion="32" />
+<uses-permission
+    android:name="android.permission.ACCESS_COARSE_LOCATION"
+    android:maxSdkVersion="32" />
+
+<!-- Android 13-17 (API 33+) Nearby Wi-Fi Devices -->
+<uses-permission
+    android:name="android.permission.NEARBY_WIFI_DEVICES"
+    android:usesPermissionFlags="neverForLocation"
+    tools:targetApi="tiramisu" />
+
+<!-- Android 9 (API 28) only: save received files to public Downloads -->
+<uses-permission
+    android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    android:maxSdkVersion="28" />

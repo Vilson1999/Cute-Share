@@ -12,6 +12,8 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
+  val isSplitApk = project.hasProperty("splitApk")
+
   defaultConfig {
     applicationId = "com.aistudio.cuteshare.vilsonsonkar"
     minSdk = 28
@@ -21,12 +23,25 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    ndk {
-      val target = project.findProperty("targetAbi") as String?
-      if (!target.isNullOrEmpty()) {
-        abiFilters.add(target)
-      } else {
-        abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+    if (!isSplitApk) {
+      ndk {
+        val target = project.findProperty("targetAbi") as String?
+        if (!target.isNullOrEmpty()) {
+          abiFilters.add(target)
+        } else {
+          abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+        }
+      }
+    }
+  }
+
+  if (isSplitApk) {
+    splits {
+      abi {
+        isEnable = true
+        reset()
+        include("armeabi-v7a", "arm64-v8a")
+        isUniversalApk = false
       }
     }
   }

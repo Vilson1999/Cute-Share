@@ -58,23 +58,24 @@ fun HardwareReadinessDialog(
 ) {
     val context = LocalContext.current
 
-    var isWifiOn by remember { mutableStateOf(HardwareReadinessManager.isWifiEnabled(context)) }
-    var isBluetoothOn by remember { mutableStateOf(HardwareReadinessManager.isBluetoothEnabled(context)) }
-    var isLocationOn by remember { mutableStateOf(HardwareReadinessManager.isLocationEnabled(context)) }
+    var missingSetting by remember { mutableStateOf(HardwareReadinessManager.getMissingRequiredSetting(context)) }
+    var hasAllPerms by remember { mutableStateOf(HardwareReadinessManager.hasAllPermissions(context)) }
     var hasNearbyWifiPerm by remember { mutableStateOf(HardwareReadinessManager.hasNearbyWifiPermission(context)) }
     var hasBluetoothPerm by remember { mutableStateOf(HardwareReadinessManager.hasBluetoothPermissions(context)) }
     var hasLocPerm by remember { mutableStateOf(HardwareReadinessManager.hasLocationPermission(context)) }
-    var hasDownloadWritePerm by remember { mutableStateOf(HardwareReadinessManager.hasPublicDownloadWritePermission(context)) }
+    val locationRequired = HardwareReadinessManager.isLocationRequired()
 
     fun refreshStates() {
-        isWifiOn = HardwareReadinessManager.isWifiEnabled(context)
-        isBluetoothOn = HardwareReadinessManager.isBluetoothEnabled(context)
-        isLocationOn = HardwareReadinessManager.isLocationEnabled(context)
+        missingSetting = HardwareReadinessManager.getMissingRequiredSetting(context)
+        hasAllPerms = HardwareReadinessManager.hasAllPermissions(context)
         hasNearbyWifiPerm = HardwareReadinessManager.hasNearbyWifiPermission(context)
         hasBluetoothPerm = HardwareReadinessManager.hasBluetoothPermissions(context)
         hasLocPerm = HardwareReadinessManager.hasLocationPermission(context)
-        hasDownloadWritePerm = HardwareReadinessManager.hasPublicDownloadWritePermission(context)
     }
+
+    val isWifiOn = missingSetting != HardwareReadinessManager.RequiredSetting.WIFI && HardwareReadinessManager.isWifiEnabled(context)
+    val isBluetoothOn = missingSetting != HardwareReadinessManager.RequiredSetting.BLUETOOTH && HardwareReadinessManager.isBluetoothEnabled(context)
+    val isLocationOn = !locationRequired || (missingSetting != HardwareReadinessManager.RequiredSetting.LOCATION && HardwareReadinessManager.isLocationEnabled(context))
 
     val permissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -115,8 +116,7 @@ fun HardwareReadinessDialog(
         refreshStates()
     }
 
-    val isCompletelyReady = isWifiOn && isBluetoothOn && isLocationOn &&
-            hasNearbyWifiPerm && hasBluetoothPerm && hasLocPerm && hasDownloadWritePerm
+    val isCompletelyReady = hasAllPerms && missingSetting == null
 
     LaunchedEffect(isCompletelyReady) {
         if (isCompletelyReady) {
@@ -131,24 +131,23 @@ fun HardwareReadinessDialog(
             return
         }
 
-        if (!isBluetoothOn) {
-            try {
-                bluetoothLauncher.launch(HardwareReadinessManager.getEnableBluetoothIntent())
-                return
-            } catch (_: Exception) {}
-        }
-
-        if (!isWifiOn) {
-            try {
-                wifiSettingsLauncher.launch(HardwareReadinessManager.getEnableWifiIntent())
-                return
-            } catch (_: Exception) {}
-        }
-
-        if (!isLocationOn) {
-            try {
-                locationSettingsLauncher.launch(HardwareReadinessManager.getEnableLocationIntent())
-            } catch (_: Exception) {}
+        when (HardwareReadinessManager.getMissingRequiredSetting(context)) {
+            HardwareReadinessManager.RequiredSetting.WIFI -> {
+                try {
+                    wifiSettingsLauncher.launch(HardwareReadinessManager.getEnableWifiIntent())
+                } catch (_: Exception) {}
+            }
+            HardwareReadinessManager.RequiredSetting.BLUETOOTH -> {
+                try {
+                    bluetoothLauncher.launch(HardwareReadinessManager.getEnableBluetoothIntent())
+                } catch (_: Exception) {}
+            }
+            HardwareReadinessManager.RequiredSetting.LOCATION -> {
+                try {
+                    locationSettingsLauncher.launch(HardwareReadinessManager.getEnableLocationIntent())
+                } catch (_: Exception) {}
+            }
+            null -> Unit
         }
     }
 
@@ -241,40 +240,42 @@ fun HardwareReadinessDialog(
                     }
                 )
 
-                HardwareStatusItem(
-                    title = "Nearby Devices",
-                    subtitle = "Required to scan and connect with nearby phones",
-                    icon = AppIcons.NearMe,
-                    iconColor = Color(0xFFA855F7),
-                    isReady = hasNearbyWifiPerm,
-                    onEnable = {
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    HardwareStatusItem(
+                        title = "Nearby Devices",
+                        subtitle = "Required to scan and connect with nearby phones",
+                        icon = AppIcons.NearMe,
+                        iconColor = Color(0xFFA855F7),
+                        isReady = hasNearbyWifiPerm,
+                        onEnable = {
                             permissionsLauncher.launch(arrayOf(android.Manifest.permission.NEARBY_WIFI_DEVICES))
                         }
-                    }
-                )
+                    )
+                }
 
-                HardwareStatusItem(
-                    title = "Location Services",
-                    subtitle = "Required by Android for Wi-Fi Direct P2P",
-                    icon = Icons.Rounded.LocationOn,
-                    iconColor = Color(0xFF10B981),
-                    isReady = isLocationOn && hasLocPerm,
-                    onEnable = {
-                        if (!hasLocPerm) {
-                            permissionsLauncher.launch(
-                                arrayOf(
-                                    android.Manifest.permission.ACCESS_FINE_LOCATION,
-                                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                if (locationRequired) {
+                    HardwareStatusItem(
+                        title = "Location Services",
+                        subtitle = "Required by Android for Wi-Fi Direct P2P",
+                        icon = Icons.Rounded.LocationOn,
+                        iconColor = Color(0xFF10B981),
+                        isReady = isLocationOn && hasLocPerm,
+                        onEnable = {
+                            if (!hasLocPerm) {
+                                permissionsLauncher.launch(
+                                    arrayOf(
+                                        android.Manifest.permission.ACCESS_FINE_LOCATION,
+                                        android.Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
                                 )
-                            )
-                        } else {
-                            try {
-                                locationSettingsLauncher.launch(HardwareReadinessManager.getEnableLocationIntent())
-                            } catch (_: Exception) {}
+                            } else {
+                                try {
+                                    locationSettingsLauncher.launch(HardwareReadinessManager.getEnableLocationIntent())
+                                } catch (_: Exception) {}
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
         },
         confirmButton = {

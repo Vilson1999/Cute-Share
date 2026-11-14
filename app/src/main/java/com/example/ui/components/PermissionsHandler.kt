@@ -48,67 +48,17 @@ fun PermissionsHandler(
     onPermissionsResult: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
-    val permissionsToRequest = buildList {
-        // --- 1. MEDIA & STORAGE PERMISSIONS (Strictly stratified by Android OS version) ---
-        when {
-            // Android 14+ (API 34+): Fine-grained media + partial user selected
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
-                add(Manifest.permission.READ_MEDIA_IMAGES)
-                add(Manifest.permission.READ_MEDIA_VIDEO)
-                add(Manifest.permission.READ_MEDIA_AUDIO)
-                add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-            }
-            // Android 13 (API 33, Tiramisu): Granular media permissions
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
-                add(Manifest.permission.READ_MEDIA_IMAGES)
-                add(Manifest.permission.READ_MEDIA_VIDEO)
-                add(Manifest.permission.READ_MEDIA_AUDIO)
-            }
-            // Android 11 & 12 (API 30–32): Standard scoped external storage read
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
-                add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            }
-            // Android 9 & 10 (API 28–29): Legacy storage write + read
-            else -> {
-                add(Manifest.permission.READ_EXTERNAL_STORAGE)
-                add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
-        }
-
-        // --- 2. WI-FI DIRECT & NEARBY DEVICES PERMISSIONS ---
-        // Android 13+ (API 33+): Mandatory NEARBY_WIFI_DEVICES for Wi-Fi Direct peer discovery & group operations
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(Manifest.permission.NEARBY_WIFI_DEVICES)
-        }
-
-        // --- 3. BLUETOOTH PERMISSIONS ---
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+ (API 31+): Runtime scan, connect, advertise
-            add(Manifest.permission.BLUETOOTH_SCAN)
-            add(Manifest.permission.BLUETOOTH_CONNECT)
-            add(Manifest.permission.BLUETOOTH_ADVERTISE)
-        } else {
-            // Android 9, 10, 11: Normal install-time bluetooth permissions
-            add(Manifest.permission.BLUETOOTH)
-            add(Manifest.permission.BLUETOOTH_ADMIN)
-        }
-
-        // --- 4. LOCATION (MANDATORY on Android 9, 10, 11, 12 for Wi-Fi Direct and scan) ---
-        // Also required on Android 13+ whenever scanning without neverForLocation flags or on diverse OEM radios
-        add(Manifest.permission.ACCESS_FINE_LOCATION)
-        add(Manifest.permission.ACCESS_COARSE_LOCATION)
-    }.distinct().toTypedArray()
+    val permissionsToRequest = HardwareReadinessManager.getRequiredPermissions()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
+    ) { _ ->
         // Store that permissions dialog was processed
         context.getSharedPreferences("cute_share_prefs", Context.MODE_PRIVATE).edit {
             putBoolean("has_asked_permissions", true)
         }
 
-        val allCoreGranted = HardwareReadinessManager.hasNearbyWifiPermission(context) &&
-            HardwareReadinessManager.hasLocationPermission(context)
+        val allCoreGranted = HardwareReadinessManager.hasAllPermissions(context)
         onPermissionsResult(allCoreGranted)
         onDismiss()
     }
@@ -143,12 +93,14 @@ fun PermissionsHandler(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    PermissionItemRow(
-                        icon = AppIcons.Folder,
-                        iconColor = Color(0xFF38BDF8),
-                        title = "Storage & Files",
-                        desc = "Select and save transferred photos, videos, and files"
-                    )
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                        PermissionItemRow(
+                            icon = AppIcons.Folder,
+                            iconColor = Color(0xFF38BDF8),
+                            title = "Downloads Storage",
+                            desc = "Save received photos, videos, and files to Downloads"
+                        )
+                    }
 
                     PermissionItemRow(
                         icon = AppIcons.Wifi,
@@ -164,19 +116,23 @@ fun PermissionsHandler(
                         desc = "Instantly discover and pair with nearby devices without internet"
                     )
 
-                    PermissionItemRow(
-                        icon = AppIcons.NearMe,
-                        iconColor = Color(0xFFA855F7),
-                        title = "Nearby Devices",
-                        desc = "Scan and connect directly to nearby phones"
-                    )
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        PermissionItemRow(
+                            icon = AppIcons.NearMe,
+                            iconColor = Color(0xFFA855F7),
+                            title = "Nearby Devices",
+                            desc = "Scan and connect directly to nearby phones"
+                        )
+                    }
 
-                    PermissionItemRow(
-                        icon = Icons.Rounded.LocationOn,
-                        iconColor = Color(0xFFF59E0B),
-                        title = "Location (Android requirement)",
-                        desc = "Required by Android OS for Wi-Fi hotspot and radar"
-                    )
+                    if (HardwareReadinessManager.isLocationRequired()) {
+                        PermissionItemRow(
+                            icon = Icons.Rounded.LocationOn,
+                            iconColor = Color(0xFFF59E0B),
+                            title = "Location (Android requirement)",
+                            desc = "Required by Android OS for Wi-Fi hotspot and radar"
+                        )
+                    }
                 }
             },
             confirmButton = {
